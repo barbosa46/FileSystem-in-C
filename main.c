@@ -4,19 +4,14 @@
 #include <string.h>
 #include <ctype.h>
 #include <pthread.h>
-#include <time.h>
-#include <time.h>
+#include <sys/time.h>
 #include "fs.h"
 
 #define MAX_COMMANDS 150000
 #define MAX_INPUT_SIZE 100
 
-#ifdef MUTEX
+#if defined (RWLOCK) || defined (MUTEX)
     pthread_mutex_t commandMut;
-    pthread_mutex_t treeMut;
-#elif RWLOCK
-    pthread_mutex_t commandMut;
-    pthread_rwlock_t treeRw;
 #endif
 
 int numberThreads = 0;
@@ -30,92 +25,39 @@ char fileLocation[MAX_INPUT_SIZE];
 
 /*_________________________Multithreading_Aux_Functions_________________________*/
 
-void initLocks(){
-    #ifdef MUTEX
-    	if(pthread_mutex_init(&treeMut,NULL)!=0 || pthread_mutex_init(&commandMut,NULL)!=0){
-            fprintf(stderr, "Error: Could not init locks.\n");
-            exit(EXIT_FAILURE);
-        }
-        
-	#elif RWLOCK
-    	if(pthread_mutex_init(&commandMut,NULL)!=0 || pthread_rwlock_init(&treeRw,NULL)!= 0){
-            fprintf(stderr, "Error: Could not init locks.\n");
+void initCommandLock(){
+    #if defined (RWLOCK) || defined (MUTEX)
+    	if(pthread_mutex_init(&commandMut, NULL) != 0){
+            fprintf(stderr, "Error: Could not init mutex.\n");
             exit(EXIT_FAILURE);
         }
 	#endif
 }
+
 void lockCommand() {
-    #ifdef MUTEX
-        if(pthread_mutex_lock(&commandMut) != 0) {
-            fprintf(stderr, "Error: Could not lock mutex\n");
-            exit(EXIT_FAILURE);
-        }
-    #elif RWLOCK
+    #if defined (RWLOCK) || defined (MUTEX)
         if(pthread_mutex_lock(&commandMut) != 0) {
             fprintf(stderr, "Error: Could not lock mutex\n");
             exit(EXIT_FAILURE);
         }
     #endif
 }
+
 void unlockCommand() {
-    #ifdef MUTEX
-        if(pthread_mutex_unlock(&commandMut) != 0) {
-            fprintf(stderr, "Error: Could not unlock mutex\n");
-            exit(EXIT_FAILURE);
-        }
-    #elif RWLOCK
+    #if defined (RWLOCK) || defined (MUTEX)
         if(pthread_mutex_unlock(&commandMut) != 0) {
             fprintf(stderr, "Error: Could not unlock mutex\n");
             exit(EXIT_FAILURE);
         }
     #endif
 }
-void writeLockTree() {
-    #ifdef MUTEX
-        if(pthread_mutex_lock(&treeMut) != 0) {
-            fprintf(stderr, "Error: Could not lock mutex\n");
+
+void destroyCommandLock(){
+    #if defined (RWLOCK) || defined (MUTEX)
+        if(pthread_mutex_destroy(&commandMut)!= 0) {
+            fprintf(stderr, "Error: Could not destroy mutex\n");
             exit(EXIT_FAILURE);
         }
-    #elif RWLOCK
-        if(pthread_rwlock_wrlock(&treeRw) != 0) {
-            fprintf(stderr, "Error: Could not lock rwlock\n");
-            exit(EXIT_FAILURE);
-        }
-    #endif
-}
-void readLockTree() {
-    #ifdef MUTEX
-        if(pthread_mutex_lock(&treeMut) != 0) {
-            fprintf(stderr, "Error: Could not lock mutex\n");
-            exit(EXIT_FAILURE);
-        }
-    #elif RWLOCK
-        if(pthread_rwlock_rdlock(&treeRw) != 0) {
-            fprintf(stderr, "Error: Could not lock rwlock\n");
-            exit(EXIT_FAILURE);
-        }
-    #endif
-}
-void unlockTree() {
-    #ifdef MUTEX
-        if(pthread_mutex_unlock(&treeMut) != 0) {
-            fprintf(stderr, "Error: Could not unlock mutex\n");
-            exit(EXIT_FAILURE);
-        }
-    #elif RWLOCK
-        if(pthread_rwlock_unlock(&treeRw) != 0) {
-            fprintf(stderr, "Error: Could not unlock rwlock\n");
-            exit(EXIT_FAILURE);
-        }
-    #endif
-}
-void destroyLocks(){
-    #ifdef MUTEX
-    	pthread_mutex_destroy(&treeMut);
-        pthread_mutex_destroy(&commandMut);
-	#elif RWLOCK
-        pthread_mutex_destroy(&commandMut);
-        pthread_rwlock_destroy(&treeRw);
 	#endif
 }
 
@@ -136,13 +78,13 @@ static void parseArgs (long argc, char* const argv[]){
     numberThreads= atoi(argv[3]);
     if(numberThreads<=0){
         fprintf(stderr,"Invalid number of threads.\n");
-        displayUsage(argv[0]);   
+        displayUsage(argv[0]);
     }
-    
+
     numBuckets= atoi(argv[4]);
     if(numBuckets<=0){
         fprintf(stderr,"Invalid number of buckets.\n");
-        displayUsage(argv[0]);   
+        displayUsage(argv[0]);
     }
 }
 
@@ -201,16 +143,17 @@ void processInput(){
 }
 
 void * applyCommands(){
-    while(1){
+    while(1) {
         lockCommand();
-        if(numberCommands>0){
+        if(numberCommands > 0) {
 
             const char* command = removeCommand();
 
-            if (command == NULL){
+            if (command == NULL) {
                 unlockCommand();
                 continue;
             }
+
             char token;
             char name[MAX_INPUT_SIZE];
             int numTokens = sscanf(command, "%c %s", &token, name);
@@ -227,21 +170,14 @@ void * applyCommands(){
                     iNumber = obtainNewInumber(fs);
 
                     unlockCommand();
-                    writeLockTree();
 
                     create(fs, name, iNumber);
-
-                    unlockTree();
 
                     break;
                 case 'l':
                     unlockCommand();
-                    readLockTree();
 
                     searchResult = lookup(fs, name);
-
-                    unlockTree();
-
                     if(!searchResult)
                         printf("%s not found\n", name);
                     else
@@ -250,12 +186,9 @@ void * applyCommands(){
                     break;
                 case 'd':
                     unlockCommand();
-                    writeLockTree();
-                    
+
                     delete(fs, name);
-                    
-                    unlockTree();
-                    
+
                     break;
                 default: { /* error */
                     unlockCommand();
@@ -264,8 +197,7 @@ void * applyCommands(){
                     exit(EXIT_FAILURE);
                 }
             }
-        }
-        else{
+        } else {
             unlockCommand();
             return NULL;
         }
@@ -277,34 +209,40 @@ void runThreads(int numberThreads){
     double elapsed;
     int i = 0;
     pthread_t threads[numberThreads];
-    
-    if(gettimeofday(&start)==NULL){
+
+    if(gettimeofday(&start, NULL) != 0){
         fprintf(stderr, "Error: gettimeofday failed.\n");
         exit(EXIT_FAILURE);
     }
-    
+
     for(i = 0;i < numberThreads; ++i){
         if (pthread_create(&threads[i], 0, applyCommands, NULL) != 0){
             fprintf(stderr, "Error: Could not create thread\n");
             exit(EXIT_FAILURE);
         }
     }
-    for (i = 0; i < numberThreads; ++i)
-        pthread_join(threads[i], NULL);
+    for (i = 0; i < numberThreads; ++i) {
+        if (pthread_join(threads[i], NULL) != 0) {
+            fprintf(stderr, "Error: Could not join threads\n");
+        }
+    }
 
-    if(gettimeofday(&finish)==NULL){
+    if(gettimeofday(&finish, NULL) != 0){
         fprintf(stderr, "Error: gettimeofday failed.\n");
         exit(EXIT_FAILURE);
     }
-    elapsed= (double)(finish.tv_sec) +(double)(finish.tv_usec / 1000000.0) - \ 
-            (double)(start.tv_sec) +(double)(start.tv_usec / 1000000.0);
+
+    elapsed = (double)(finish.tv_sec) + (double)(finish.tv_usec / 1000000.0) - \
+            (double)(start.tv_sec) + (double)(start.tv_usec / 1000000.0);
     printf("TecnicoFS completed in %.4f seconds.\n",elapsed);
 }
 
 int main(int argc, char* argv[]) {
-    initLocks();
+    FILE *out;
+
+    initCommandLock();
     parseArgs(argc, argv);
-    if(FILE *out= fopen(argv[2],"w")==NULL){
+    if((out = fopen(argv[2],"w")) == NULL){
         fprintf(stderr,"ERROR: Couldn't open file.\n");
         exit(EXIT_FAILURE);
     }
@@ -313,10 +251,10 @@ int main(int argc, char* argv[]) {
 
     runThreads(numberThreads);
 
-    print_tecnicofs_tree(out, fs);
+    print_tecnicofs(out, fs);
     fclose(out);
+    destroyCommandLock();
     free_tecnicofs(fs);
-    destroyLocks();
 
     exit(EXIT_SUCCESS);
 }
