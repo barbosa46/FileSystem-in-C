@@ -1,58 +1,12 @@
+/* Sistemas Operativos, DEI/IST/ULisboa 2019-20 */
+
 #include "fs.h"
-#include <pthread.h>
+#include "lib/bst.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include "sync.h"
 
-#ifdef MUTEX
-    pthread_mutex_t treeMutexs[numBuckets];
-#elif RWLOCK
-	pthread_rwlock_t treeRWLocks[numBuckets];
-#endif
-
-void initTreeLocks(){
-    #ifdef MUTEX
-		int i;
-
-		for (i = 0; i < numBuckets; i++) {
-    		if(pthread_mutex_init(&treeMutexs[i], NULL) != 0){
-            	fprintf(stderr, "Error: Could not init mutex.\n");
-            	exit(EXIT_FAILURE);
-        	}
-		}
-	#elif RWLOCK
-		int i;
-
-		for (i = 0; i < numBuckets; i++) {
-			if(pthread_rwlock_init(&treeRWLocks[i], NULL) != 0){
-				fprintf(stderr, "Error: Could not init rwlock.\n");
-				exit(EXIT_FAILURE);
-			}
-		}
-	#endif
-}
-
-void destroyTreeLocks(){
-	#ifdef MUTEX
-		int i;
-
-		for (i = 0; i < numBuckets; i++) {
-    		if(pthread_mutex_destroy(&treeMutexs[i], NULL) != 0){
-            	fprintf(stderr, "Error: Could not destroy mutex.\n");
-            	exit(EXIT_FAILURE);
-        	}
-		}
-	#elif RWLOCK
-		int i;
-
-		for (i = 0; i < numBuckets; i++) {
-			if(pthread_rwlock_destroy(&treeRWLocks[i], NULL) != 0){
-				fprintf(stderr, "Error: Could not destroy rwlock.\n");
-				exit(EXIT_FAILURE);
-			}
-		}
-	#endif
-}
 
 int obtainNewInumber(tecnicofs* fs) {
 	int newInumber = ++(fs->nextINumber);
@@ -60,20 +14,24 @@ int obtainNewInumber(tecnicofs* fs) {
 }
 
 tecnicofs* new_tecnicofs(){
+	int i;
+
 	tecnicofs*fs = malloc(sizeof(tecnicofs));
 	if (!fs) {
 		perror("failed to allocate tecnicofs");
 		exit(EXIT_FAILURE);
 	}
-
-	fs->bstRoots = (node **) malloc(sizeof(node*) * numBuckets);
-	if (!fs->bstRoots) {
+	fs->bsts = (bst *) calloc(numBuckets, sizeof(bst));
+	if (!fs->bsts) {
 		perror("failed to allocate tecnicofs");
 		exit(EXIT_FAILURE);
 	}
-	fs->nextINumber = 0;
 
-	initTreeLocks();
+	fs->nextINumber = 0;
+	for (i = 0; i < numBuckets; i++) {
+		fs->bsts[i].bstRoot = NULL;
+		sync_init(&(fs->bsts[i].bstLock));
+	}
 
 	return fs;
 }
@@ -81,114 +39,47 @@ tecnicofs* new_tecnicofs(){
 void free_tecnicofs(tecnicofs* fs){
 	int i;
 
-	for (i = 0; i < numBuckets; i++) { free_tree(fs->bstRoots[i]); }
-	free(fs->bstRoots);
-	free(fs);
+	for (i = 0; i < numBuckets; i++) {
+		free_tree(fs->bsts[i].bstRoot);
+		sync_destroy(&(fs->bsts[i].bstLock));
 
-	destroyTreeLocks();
+	}
+
+	free(fs->bsts);
+	free(fs);
 }
 
 void create(tecnicofs* fs, char *name, int inumber){
 	int key = hash(name, numBuckets);
 
-	#ifdef MUTEX
-	    pthread_mutex_t *mut = &treeMutexs[key];
-		if(pthread_mutex_lock(mut) != 0) {
-            fprintf(stderr, "Error: Could not lock mutex\n");
-            exit(EXIT_FAILURE);
-        }
-	#elif RWLOCK
-		pthread_rwlock_t *rwlock = &treeRWLocks[key];
-		if(pthread_rwlock_wrlock(rwlock) != 0) {
-            fprintf(stderr, "Error: Could not lock rwlock\n");
-            exit(EXIT_FAILURE);
-        }
-	#endif
-
-	fs->bstRoots[key] = insert(fs->bstRoots[key], name, inumber);
-
-	#ifdef MUTEX
-		if(pthread_mutex_unlock(mut) != 0) {
-            fprintf(stderr, "Error: Could not unlock mutex\n");
-            exit(EXIT_FAILURE);
-        }
-	#elif RWLOCK
-		if(pthread_rwlock_unlock(rwlock) != 0) {
-            fprintf(stderr, "Error: Could not unlock rwlock\n");
-            exit(EXIT_FAILURE);
-        }
-	#endif
+	sync_wrlock(&(fs->bsts[key].bstLock));
+	fs->bsts[key].bstRoot = insert(fs->bsts[key].bstRoot, name, inumber);
+	sync_unlock(&(fs->bsts[key].bstLock));
 }
 
 void delete(tecnicofs* fs, char *name){
 	int key = hash(name, numBuckets);
 
-	#ifdef MUTEX
-	    pthread_mutex_t *mut = &treeMutexs[key];
-		if(pthread_mutex_lock(mut) != 0) {
-            fprintf(stderr, "Error: Could not lock mutex\n");
-            exit(EXIT_FAILURE);
-        }
-	#elif RWLOCK
-		pthread_rwlock_t *rwlock = &treeRWLocks[key];
-		if(pthread_rwlock_wrlock(rwlock) != 0) {
-            fprintf(stderr, "Error: Could not lock rwlock\n");
-            exit(EXIT_FAILURE);
-        }
-	#endif
-
-	fs->bstRoots[key] = remove_item(fs->bstRoots[key], name);
-
-	#ifdef MUTEX
-		if(pthread_mutex_unlock(mut) != 0) {
-            fprintf(stderr, "Error: Could not unlock mutex\n");
-            exit(EXIT_FAILURE);
-        }
-	#elif RWLOCK
-		if(pthread_rwlock_unlock(rwlock) != 0) {
-            fprintf(stderr, "Error: Could not unlock rwlock\n");
-            exit(EXIT_FAILURE);
-        }
-	#endif
+	sync_wrlock(&(fs->bsts[key].bstLock));
+	fs->bsts[key].bstRoot = remove_item(fs->bsts[key].bstRoot, name);
+	sync_unlock(&(fs->bsts[key].bstLock));
 }
 
 int lookup(tecnicofs* fs, char *name){
 	int key = hash(name, numBuckets);
 
-	#ifdef MUTEX
-	    pthread_mutex_t *mut = &treeMutexs[key];
-		if(pthread_mutex_lock(mut) != 0) {
-            fprintf(stderr, "Error: Could not lock mutex\n");
-            exit(EXIT_FAILURE);
-        }
-	#elif RWLOCK
-		pthread_rwlock_t *rwlock = &treeRWLocks[key];
-		if(pthread_rwlock_rdlock(rwlock) != 0) {
-            fprintf(stderr, "Error: Could not lock rwlock\n");
-            exit(EXIT_FAILURE);
-        }
-	#endif
-
-	node* searchNode = search(fs->bstRoots[key], name);
-	if ( searchNode ) return searchNode->inumber;
-
-	#ifdef MUTEX
-		if(pthread_mutex_unlock(mut) != 0) {
-            fprintf(stderr, "Error: Could not unlock mutex\n");
-            exit(EXIT_FAILURE);
-        }
-	#elif RWLOCK
-		if(pthread_rwlock_unlock(rwlock) != 0) {
-            fprintf(stderr, "Error: Could not unlock rwlock\n");
-            exit(EXIT_FAILURE);
-        }
-	#endif
-
-	return 0;
+	sync_rdlock(&(fs->bsts[key].bstLock));
+	int inumber = 0;
+	node* searchNode = search(fs->bsts[key].bstRoot, name);
+	if ( searchNode ) {
+		inumber = searchNode->inumber;
+	}
+	sync_unlock(&(fs->bsts[key].bstLock));
+	return inumber;
 }
 
-void print_tecnicofs(FILE * fp, tecnicofs *fs){
+void print_tecnicofs_tree(FILE * fp, tecnicofs *fs){
 	int i;
 
-	for (i = 0; i < numBuckets; i++) { print_tree(fp, fs->bstRoots[i]); }
+	for (i = 0; i < numBuckets; i++) { print_tree(fp, fs->bsts[i].bstRoot); }
 }

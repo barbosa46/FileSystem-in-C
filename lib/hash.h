@@ -4,3 +4,4 @@
 int hash(char* name, int n);
 
 #endif
+

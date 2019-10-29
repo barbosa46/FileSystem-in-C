@@ -1,70 +1,28 @@
+/* Sistemas Operativos, DEI/IST/ULisboa 2019-20 */
+
 #include <stdio.h>
 #include <stdlib.h>
-#include <getopt.h>
 #include <string.h>
-#include <ctype.h>
 #include <pthread.h>
-#include <sys/time.h>
 #include "fs.h"
+#include "constants.h"
+#include "lib/timer.h"
+#include "sync.h"
 
-#define MAX_COMMANDS 150000
-#define MAX_INPUT_SIZE 100
-
-#if defined (RWLOCK) || defined (MUTEX)
-    pthread_mutex_t commandMut;
-#endif
-
+char* global_inputFile = NULL;
+char* global_outputFile = NULL;
 int numberThreads = 0;
+int numBuckets = 0;
+pthread_mutex_t commandsLock;
 tecnicofs* fs;
 
 char inputCommands[MAX_COMMANDS][MAX_INPUT_SIZE];
 int numberCommands = 0;
 int headQueue = 0;
-int numBuckets= 0;
-char fileLocation[MAX_INPUT_SIZE];
-
-/*_________________________Multithreading_Aux_Functions_________________________*/
-
-void initCommandLock(){
-    #if defined (RWLOCK) || defined (MUTEX)
-    	if(pthread_mutex_init(&commandMut, NULL) != 0){
-            fprintf(stderr, "Error: Could not init mutex.\n");
-            exit(EXIT_FAILURE);
-        }
-	#endif
-}
-
-void lockCommand() {
-    #if defined (RWLOCK) || defined (MUTEX)
-        if(pthread_mutex_lock(&commandMut) != 0) {
-            fprintf(stderr, "Error: Could not lock mutex\n");
-            exit(EXIT_FAILURE);
-        }
-    #endif
-}
-
-void unlockCommand() {
-    #if defined (RWLOCK) || defined (MUTEX)
-        if(pthread_mutex_unlock(&commandMut) != 0) {
-            fprintf(stderr, "Error: Could not unlock mutex\n");
-            exit(EXIT_FAILURE);
-        }
-    #endif
-}
-
-void destroyCommandLock(){
-    #if defined (RWLOCK) || defined (MUTEX)
-        if(pthread_mutex_destroy(&commandMut)!= 0) {
-            fprintf(stderr, "Error: Could not destroy mutex\n");
-            exit(EXIT_FAILURE);
-        }
-	#endif
-}
-
-/*_________________________End_Of_Aux_Functions_________________________*/
 
 static void displayUsage (const char* appName){
-    printf("Usage: %s\n", appName);
+    printf("Usage: %s input_filepath output_filepath threads_number buckets_number\n",
+           appName);
     exit(EXIT_FAILURE);
 }
 
@@ -73,16 +31,16 @@ static void parseArgs (long argc, char* const argv[]){
         fprintf(stderr, "Invalid format:\n");
         displayUsage(argv[0]);
     }
-    strcpy(fileLocation,argv[1]);
 
-    numberThreads= atoi(argv[3]);
-    if(numberThreads<=0){
-        fprintf(stderr,"Invalid number of threads.\n");
+    global_inputFile = argv[1];
+    global_outputFile = argv[2];
+    numberThreads = atoi(argv[3]);
+    if (!numberThreads) {
+        fprintf(stderr, "Invalid number of threads.\n");
         displayUsage(argv[0]);
     }
-
-    numBuckets= atoi(argv[4]);
-    if(numBuckets<=0){
+    numBuckets = atoi(argv[4]);
+    if(!numBuckets){
         fprintf(stderr,"Invalid number of buckets.\n");
         displayUsage(argv[0]);
     }
@@ -97,25 +55,32 @@ int insertCommand(char* data) {
 }
 
 char* removeCommand() {
-    if((numberCommands > 0)){
+    if(numberCommands > 0){
         numberCommands--;
         return inputCommands[headQueue++];
     }
     return NULL;
 }
 
-void errorParse(){
-    fprintf(stderr, "Error: command invalid\n");
-    //exit(EXIT_FAILURE);
+void errorParse(int lineNumber){
+    fprintf(stderr, "Error: line %d invalid\n", lineNumber);
+    exit(EXIT_FAILURE);
 }
 
 void processInput(){
-    FILE *file = fopen(fileLocation,"r");
+    FILE* inputFile;
+    inputFile = fopen(global_inputFile, "r");
+    if(!inputFile){
+        fprintf(stderr, "Error: Could not read %s\n", global_inputFile);
+        exit(EXIT_FAILURE);
+    }
     char line[MAX_INPUT_SIZE];
+    int lineNumber = 0;
 
-    while (fgets(line, sizeof(line)/sizeof(char), file)) {
+    while (fgets(line, sizeof(line)/sizeof(char), inputFile)) {
         char token;
         char name[MAX_INPUT_SIZE];
+        lineNumber++;
 
         int numTokens = sscanf(line, "%c %s", &token, name);
 
@@ -128,133 +93,118 @@ void processInput(){
             case 'l':
             case 'd':
                 if(numTokens != 2)
-                    errorParse();
+                    errorParse(lineNumber);
                 if(insertCommand(line))
                     break;
                 return;
             case '#':
                 break;
             default: { /* error */
-                errorParse();
+                errorParse(lineNumber);
             }
         }
     }
-    fclose(file);
+    fclose(inputFile);
 }
 
-void * applyCommands(){
-    while(1) {
-        lockCommand();
-        if(numberCommands > 0) {
+FILE * openOutputFile() {
+    FILE *fp;
+    fp = fopen(global_outputFile, "w");
+    if (fp == NULL) {
+        perror("Error opening output file");
+        exit(EXIT_FAILURE);
+    }
+    return fp;
+}
 
+void* applyCommands(){
+    while(1){
+        mutex_lock(&commandsLock);
+        if(numberCommands > 0){
             const char* command = removeCommand();
-
-            if (command == NULL) {
-                unlockCommand();
+            if (command == NULL){
+                mutex_unlock(&commandsLock);
                 continue;
             }
-
             char token;
             char name[MAX_INPUT_SIZE];
-            int numTokens = sscanf(command, "%c %s", &token, name);
+            sscanf(command, "%c %s", &token, name);
 
-            if (numTokens != 2) {
-                fprintf(stderr, "Error: invalid command in Queue\n");
-                exit(EXIT_FAILURE);
-            }
-
-            int searchResult;
             int iNumber;
             switch (token) {
                 case 'c':
                     iNumber = obtainNewInumber(fs);
-
-                    unlockCommand();
-
+                    mutex_unlock(&commandsLock);
                     create(fs, name, iNumber);
-
                     break;
                 case 'l':
-                    unlockCommand();
-
-                    searchResult = lookup(fs, name);
+                    mutex_unlock(&commandsLock);
+                    int searchResult = lookup(fs, name);
                     if(!searchResult)
                         printf("%s not found\n", name);
                     else
                         printf("%s found with inumber %d\n", name, searchResult);
-
                     break;
                 case 'd':
-                    unlockCommand();
-
+                    mutex_unlock(&commandsLock);
                     delete(fs, name);
-
                     break;
                 default: { /* error */
-                    unlockCommand();
-
-                    fprintf(stderr, "Error: command to apply\n");
+                    mutex_unlock(&commandsLock);
+                    fprintf(stderr, "Error: commands to apply\n");
                     exit(EXIT_FAILURE);
                 }
             }
-        } else {
-            unlockCommand();
+        }else{
+            mutex_unlock(&commandsLock);
             return NULL;
         }
     }
 }
 
-void runThreads(int numberThreads){
-    struct timeval start, finish;
-    double elapsed;
-    int i = 0;
-    pthread_t threads[numberThreads];
+void runThreads(FILE* timeFp){
+    TIMER_T startTime, stopTime;
+    #if defined (RWLOCK) || defined (MUTEX)
+        pthread_t* workers = (pthread_t*) malloc(numberThreads * sizeof(pthread_t));
+    #endif
 
-    if(gettimeofday(&start, NULL) != 0){
-        fprintf(stderr, "Error: gettimeofday failed.\n");
-        exit(EXIT_FAILURE);
-    }
-
-    for(i = 0;i < numberThreads; ++i){
-        if (pthread_create(&threads[i], 0, applyCommands, NULL) != 0){
-            fprintf(stderr, "Error: Could not create thread\n");
-            exit(EXIT_FAILURE);
+    TIMER_READ(startTime);
+    #if defined (RWLOCK) || defined (MUTEX)
+        for(int i = 0; i < numberThreads; i++){
+            int err = pthread_create(&workers[i], NULL, applyCommands, NULL);
+            if (err != 0){
+                perror("Can't create thread");
+                exit(EXIT_FAILURE);
+            }
         }
-    }
-    for (i = 0; i < numberThreads; ++i) {
-        if (pthread_join(threads[i], NULL) != 0) {
-            fprintf(stderr, "Error: Could not join threads\n");
+        for(int i = 0; i < numberThreads; i++) {
+            if(pthread_join(workers[i], NULL)) {
+                perror("Can't join thread");
+            }
         }
-    }
-
-    if(gettimeofday(&finish, NULL) != 0){
-        fprintf(stderr, "Error: gettimeofday failed.\n");
-        exit(EXIT_FAILURE);
-    }
-
-    elapsed = (double)(finish.tv_sec) + (double)(finish.tv_usec / 1000000.0) - \
-            (double)(start.tv_sec) + (double)(start.tv_usec / 1000000.0);
-    printf("TecnicoFS completed in %.4f seconds.\n",elapsed);
+    #else
+        applyCommands();
+    #endif
+    TIMER_READ(stopTime);
+    fprintf(timeFp, "TecnicoFS completed in %.4f seconds.\n", TIMER_DIFF_SECONDS(startTime, stopTime));
+    #if defined (RWLOCK) || defined (MUTEX)
+        free(workers);
+    #endif
 }
 
 int main(int argc, char* argv[]) {
-    FILE *out;
-
-    initCommandLock();
     parseArgs(argc, argv);
-    if((out = fopen(argv[2],"w")) == NULL){
-        fprintf(stderr,"ERROR: Couldn't open file.\n");
-        exit(EXIT_FAILURE);
-    }
-    fs = new_tecnicofs();
     processInput();
+    FILE * outputFp = openOutputFile();
+    mutex_init(&commandsLock);
+    fs = new_tecnicofs();
 
-    runThreads(numberThreads);
+    runThreads(stdout);
+    print_tecnicofs_tree(outputFp, fs);
+    fflush(outputFp);
+    fclose(outputFp);
 
-    print_tecnicofs(out, fs);
-    fclose(out);
-    destroyCommandLock();
+    mutex_destroy(&commandsLock);
     free_tecnicofs(fs);
-
     exit(EXIT_SUCCESS);
 }
