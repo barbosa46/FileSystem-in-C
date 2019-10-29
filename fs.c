@@ -42,7 +42,6 @@ void free_tecnicofs(tecnicofs* fs){
 	for (i = 0; i < numBuckets; i++) {
 		free_tree(fs->bsts[i].bstRoot);
 		sync_destroy(&(fs->bsts[i].bstLock));
-
 	}
 
 	free(fs->bsts);
