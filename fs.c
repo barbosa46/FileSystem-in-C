@@ -50,7 +50,6 @@ void free_tecnicofs(tecnicofs* fs){
 
 void create(tecnicofs* fs, char *name, int inumber){
 	int key = hash(name, numBuckets);
-
 	sync_wrlock(&(fs->bsts[key].bstLock));
 	fs->bsts[key].bstRoot = insert(fs->bsts[key].bstRoot, name, inumber);
 	sync_unlock(&(fs->bsts[key].bstLock));

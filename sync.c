@@ -45,7 +45,7 @@ void sync_unlock(syncMech* sync){
         exit(EXIT_FAILURE);
     }
 }
-/*void init_sem(sem_t* sem,int value){
+void init_sem(sem_t* sem,int value){
     #if defined (RWLOCK) || defined (MUTEX)
         int ret= sem_init(sem,0,value);
         if(ret!=0){
@@ -62,7 +62,7 @@ void destroy_sem(sem_t* sem){
             exit(EXIT_FAILURE);
         }
     #endif
-}*/
+}
 void wait_sem(sem_t* sem){
     #if defined (RWLOCK) || defined (MUTEX)
         int ret= sem_wait(sem);

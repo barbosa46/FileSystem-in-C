@@ -21,11 +21,14 @@ tecnicofs* fs;
 char inputCommands[MAX_COMMANDS][MAX_INPUT_SIZE];
 int numberCommands = 0;
 int headQueue = 0;
+int syncro=0;
 int kill=0;
-
-void shift_left(char array[MAX_COMMANDS][MAX_INPUT_SIZE],int size){
-    for(int i=0;i<size;++i){
+void shift_left(char array[MAX_COMMANDS][MAX_INPUT_SIZE]){
+    for(int i=0;i<numberCommands;++i){
         strcpy(array[i],array[i+1]);
+    }
+    for(int i=numberCommands;i<MAX_COMMANDS;++i){
+        strcpy(array[i],"f");
     }
 }
 
@@ -62,15 +65,16 @@ void insertCommand(char* data) {
     post_sem(&semcons);
 }
 
-void removeCommand(char* data) {
+char* removeCommand() {
     wait_sem(&semcons);
     mutex_lock(&semMut);
+    char*data= (char*)malloc(sizeof(char)*(strlen(inputCommands[0])+1));
     strcpy(data,inputCommands[0]);
     numberCommands--;
-    shift_left(inputCommands, numberCommands);
+    shift_left(inputCommands);
     mutex_unlock(&semMut);
     post_sem(&semprod);
-    return ;
+    return data;
 }
 
 void errorParse(int lineNumber){
@@ -87,6 +91,7 @@ void * processInput(){
     }
     char line[MAX_INPUT_SIZE];
     int lineNumber = 0;
+    shift_left(inputCommands);
     while(fgets(line, sizeof(line)/sizeof(char), inputFile)){
         char token;
         char name[MAX_INPUT_SIZE];
@@ -133,12 +138,16 @@ FILE * openOutputFile() {
 void * applyCommands(){
     while(1){
         mutex_lock(&commandsLock);
-        if(kill!=1){
-            char* command=NULL;
-            removeCommand(command);
+        if(kill!=1||inputCommands[0][0]!='f'){
+            char* command;
+            if(strcmp(inputCommands[0],"f")!=0) command=removeCommand();
+            else{
+                command=(char*)malloc(sizeof(char)*2);
+                strcpy(command,"f");
+            }
             if (command == NULL){
                 mutex_unlock(&commandsLock);
-                continue;
+                return NULL;
             }
             char token;
             char name[MAX_INPUT_SIZE];
@@ -164,13 +173,19 @@ void * applyCommands(){
                     mutex_unlock(&commandsLock);
                     delete(fs, name);
                     break;
+
+                case 'f':
+                    mutex_unlock(&commandsLock);
+                    break;
                 default: { /* error */
                     mutex_unlock(&commandsLock);
                     fprintf(stderr, "Error: commands to apply\n");
                     exit(EXIT_FAILURE);
                 }
             }
-        }else{
+            free(command);
+        }
+        else{
             mutex_unlock(&commandsLock);
             return NULL;
         }
@@ -218,19 +233,24 @@ void runThreads(FILE* timeFp){
 }
 
 int main(int argc, char* argv[]) {
+    #if defined (RWLOCK) || defined (MUTEX)
+        syncro=1;
+    #endif
     parseArgs(argc, argv);
     mutex_init(&semMut);
-    sem_init(&semprod,0,MAX_COMMANDS);
-    sem_init(&semcons,0,0);
+    init_sem(&semprod,MAX_COMMANDS);
+    init_sem(&semcons,0);
     mutex_init(&commandsLock);
     FILE * outputFp = openOutputFile();
     fs = new_tecnicofs();
 
     runThreads(stdout);
-    print_tecnicofs_tree(outputFp, fs);
+    print_tecnicofs_tree(stdout, fs);
     fflush(outputFp);
     fclose(outputFp);
 
+    destroy_sem(&semcons);
+    destroy_sem(&semprod);
     mutex_destroy(&commandsLock);
     free_tecnicofs(fs);
     exit(EXIT_SUCCESS);
