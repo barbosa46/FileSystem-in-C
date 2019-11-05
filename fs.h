@@ -23,6 +23,7 @@ tecnicofs* new_tecnicofs();
 void free_tecnicofs(tecnicofs* fs);
 void create(tecnicofs* fs, char *name, int inumber);
 void delete(tecnicofs* fs, char *name);
+void renameFile(tecnicofs* fs, char *name1, char* name2, int iNumber);
 int lookup(tecnicofs* fs, char *name);
 void print_tecnicofs_tree(FILE * fp, tecnicofs *fs);
 

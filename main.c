@@ -95,8 +95,11 @@ void * processInput(){
     while(fgets(line, sizeof(line)/sizeof(char), inputFile)){
         char token;
         char name[MAX_INPUT_SIZE];
-        lineNumber++;
+        char name1[MAX_INPUT_SIZE];
+        char name2[MAX_INPUT_SIZE];
 
+        lineNumber++;
+        int rTokens=0;
         int numTokens = sscanf(line, "%c %s", &token, name);
 
         /* perform minimal validation */
@@ -108,6 +111,12 @@ void * processInput(){
             case 'l':
             case 'd':
                 if(numTokens != 2)
+                    errorParse(lineNumber);
+                insertCommand(line);
+                break;
+            case 'r':
+                rTokens= sscanf(name,"%s %s",name1,name2);
+                if(numTokens+rTokens != 3)
                     errorParse(lineNumber);
                 insertCommand(line);
                 break;
@@ -152,7 +161,6 @@ void * applyCommands(){
             char token;
             char name[MAX_INPUT_SIZE];
             sscanf(command, "%c %s", &token, name);
-
             int iNumber;
             switch (token) {
                 case 'c':
@@ -171,9 +179,26 @@ void * applyCommands(){
                     break;
                 case 'd':
                     mutex_unlock(&commandsLock);
-                    delete(fs, name);
+                    iNumber= lookup(fs,name);
+                    if(!iNumber) 
+                        printf("%s not found\n", name);
+                    else 
+                        delete(fs, name);
                     break;
-
+                case 'r':
+                    mutex_unlock(&commandsLock);
+                    char name1[MAX_INPUT_SIZE],name2[MAX_INPUT_SIZE];
+                    sscanf(command,"%c %s %s",&token,name1,name2);
+                    iNumber= lookup(fs,name1);
+                    int exists= lookup(fs,name2);
+                    if(!iNumber)
+                        printf("%s not found\n", name1);
+                    else if(exists)
+                        printf("%s already exists",name2);
+                    else{
+                        renameFile(fs,name1,name2,iNumber);
+                    }
+                    break;
                 case 'f':
                     mutex_unlock(&commandsLock);
                     break;
@@ -245,7 +270,7 @@ int main(int argc, char* argv[]) {
     fs = new_tecnicofs();
 
     runThreads(stdout);
-    print_tecnicofs_tree(stdout, fs);
+    print_tecnicofs_tree(outputFp, fs);
     fflush(outputFp);
     fclose(outputFp);
 

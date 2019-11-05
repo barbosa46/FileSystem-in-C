@@ -75,7 +75,18 @@ int lookup(tecnicofs* fs, char *name){
 	sync_unlock(&(fs->bsts[key].bstLock));
 	return inumber;
 }
-
+void renameFile(tecnicofs* fs, char *name1, char* name2, int iNumber){
+	int key1 = hash(name1,numBuckets);
+	int key2 = hash(name2,numBuckets);
+	sync_trylock2(&(fs->bsts[key1].bstLock),&(fs->bsts[key2].bstLock));
+	//delete
+	fs->bsts[key1].bstRoot = remove_item(fs->bsts[key1].bstRoot, name1);
+	//create
+	fs->bsts[key2].bstRoot = insert(fs->bsts[key2].bstRoot, name2, iNumber);
+	
+	sync_unlock(&(fs->bsts[key1].bstLock));
+	sync_unlock(&(fs->bsts[key2].bstLock));
+}
 void print_tecnicofs_tree(FILE * fp, tecnicofs *fs){
 	int i;
 

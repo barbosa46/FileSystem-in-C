@@ -45,6 +45,19 @@ void sync_unlock(syncMech* sync){
         exit(EXIT_FAILURE);
     }
 }
+void sync_trylock2(syncMech* sync1, syncMech* sync2){
+    #if defined (RWLOCK) || defined (MUTEX)
+    while(1){
+        if(syncMech_try_lock(sync1)){
+            if(syncMech_try_lock(sync2)){
+                break;
+            }
+            else
+                sync_unlock(sync1);
+        }
+    }
+    #endif
+}
 void init_sem(sem_t* sem,int value){
     #if defined (RWLOCK) || defined (MUTEX)
         int ret= sem_init(sem,0,value);
@@ -129,7 +142,6 @@ void mutex_unlock(pthread_mutex_t* mutex){
         }
      #endif
 }
-
 int do_nothing(void* a){
     (void)a;
     return 0;
