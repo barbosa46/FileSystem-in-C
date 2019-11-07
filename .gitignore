@@ -1,0 +1,5 @@
+tecnicofs-nosync
+tecnicofs-mutex
+tecnicofs-rwlock
+out.txt
+*.o
