@@ -6,7 +6,7 @@
 #include <semaphore.h>
 #include <pthread.h>
 
-void sync_init(syncMech* sync){
+void sync_init(syncMech* sync) {
     int ret = syncMech_init(sync, NULL);
     if(ret != 0){
         perror("sync_init failed\n");
@@ -14,7 +14,7 @@ void sync_init(syncMech* sync){
     }
 }
 
-void sync_destroy(syncMech* sync){
+void sync_destroy(syncMech* sync) {
     int ret = syncMech_destroy(sync);
     if(ret != 0){
         perror("sync_destroy failed\n");
@@ -22,7 +22,7 @@ void sync_destroy(syncMech* sync){
     }
 }
 
-void sync_wrlock(syncMech* sync){
+void sync_wrlock(syncMech* sync) {
     int ret = syncMech_wrlock(sync);
     if(ret != 0){
         perror("sync_wrlock failed");
@@ -30,7 +30,7 @@ void sync_wrlock(syncMech* sync){
     }
 }
 
-void sync_rdlock(syncMech* sync){
+void sync_rdlock(syncMech* sync) {
     int ret = syncMech_rdlock(sync);
     if(ret != 0){
         perror("sync_rdlock failed");
@@ -38,72 +38,15 @@ void sync_rdlock(syncMech* sync){
     }
 }
 
-void sync_unlock(syncMech* sync){
+void sync_unlock(syncMech* sync) {
     int ret = syncMech_unlock(sync);
     if(ret != 0){
         perror("sync_unlock failed");
         exit(EXIT_FAILURE);
     }
 }
-void sync_trylock2(syncMech* sync1, syncMech* sync2){
-    #if defined (RWLOCK) || defined (MUTEX)
-    while(1){
-        if(syncMech_try_lock(sync1)){
-            if(syncMech_try_lock(sync2)){
-                break;
-            }
-            else
-                sync_unlock(sync1);
-        }
-    }
-    #endif
-}
-void init_sem(sem_t* sem,int value){
-    #if defined (RWLOCK) || defined (MUTEX)
-        int ret= sem_init(sem,0,value);
-        if(ret!=0){
-            perror("sem_init failed\n");
-            exit(EXIT_FAILURE);
-        }
-    #endif
-}
-void destroy_sem(sem_t* sem){
-    #if defined (RWLOCK) || defined (MUTEX)
-        int ret= sem_destroy(sem);
-        if(ret!=0){
-            perror("sem_destroy failed\n");
-            exit(EXIT_FAILURE);
-        }
-    #endif
-}
-void wait_sem(sem_t* sem){
-    #if defined (RWLOCK) || defined (MUTEX)
-        int ret= sem_wait(sem);
-        if(ret!=0){
-            perror("sem_wait failed\n");
-            exit(EXIT_FAILURE);
-        }
-    #endif
-}
-void trywait_sem(sem_t* sem){
-    #if defined (RWLOCK) || defined (MUTEX)
-        int ret= sem_trywait(sem);
-        if(ret!=0){
-            perror("sem_trywait failed\n");
-            exit(EXIT_FAILURE);
-        }
-    #endif
-}
-void post_sem(sem_t* sem){
-    #if defined (RWLOCK) || defined (MUTEX)
-        int ret= sem_post(sem);
-        if(ret!=0){
-            perror("sem_post failed\n");
-            exit(EXIT_FAILURE);
-        }
-    #endif
-}
-void mutex_init(pthread_mutex_t* mutex){
+
+void mutex_init(pthread_mutex_t* mutex) {
     #if defined (RWLOCK) || defined (MUTEX)
         int ret = pthread_mutex_init(mutex, NULL);
         if(ret != 0){
@@ -113,7 +56,7 @@ void mutex_init(pthread_mutex_t* mutex){
     #endif
 }
 
-void mutex_destroy(pthread_mutex_t* mutex){
+void mutex_destroy(pthread_mutex_t* mutex) {
     #if defined (RWLOCK) || defined (MUTEX)
         int ret = pthread_mutex_destroy(mutex);
         if(ret != 0){
@@ -123,7 +66,7 @@ void mutex_destroy(pthread_mutex_t* mutex){
     #endif
 }
 
-void mutex_lock(pthread_mutex_t* mutex){
+void mutex_lock(pthread_mutex_t* mutex) {
     #if defined (RWLOCK) || defined (MUTEX)
         int ret = pthread_mutex_lock(mutex);
         if(ret != 0){
@@ -133,7 +76,7 @@ void mutex_lock(pthread_mutex_t* mutex){
     #endif
 }
 
-void mutex_unlock(pthread_mutex_t* mutex){
+void mutex_unlock(pthread_mutex_t* mutex) {
     #if defined (RWLOCK) || defined (MUTEX)
         int ret = pthread_mutex_unlock(mutex);
         if(ret != 0){
@@ -142,6 +85,57 @@ void mutex_unlock(pthread_mutex_t* mutex){
         }
      #endif
 }
+
+void init_sem(sem_t* sem, int value) {
+    #if defined (RWLOCK) || defined (MUTEX)
+        int ret = sem_init(sem, 0, value);
+        if (ret != 0) {
+            perror("sem_init failed\n");
+            exit(EXIT_FAILURE);
+        }
+    #endif
+}
+
+void destroy_sem(sem_t* sem) {
+    #if defined (RWLOCK) || defined (MUTEX)
+        int ret = sem_destroy(sem);
+        if (ret != 0) {
+            perror("sem_destroy failed\n");
+            exit(EXIT_FAILURE);
+        }
+    #endif
+}
+
+void wait_sem(sem_t* sem) {
+    #if defined (RWLOCK) || defined (MUTEX)
+        int ret = sem_wait(sem);
+        if (ret != 0) {
+            perror("sem_wait failed\n");
+            exit(EXIT_FAILURE);
+        }
+    #endif
+}
+
+void trywait_sem(sem_t* sem) {
+    #if defined (RWLOCK) || defined (MUTEX)
+        int ret = sem_trywait(sem);
+        if (ret != 0) {
+            perror("sem_trywait failed\n");
+            exit(EXIT_FAILURE);
+        }
+    #endif
+}
+
+void post_sem(sem_t* sem) {
+    #if defined (RWLOCK) || defined (MUTEX)
+        int ret = sem_post(sem);
+        if(ret != 0) {
+            perror("sem_post failed\n");
+            exit(EXIT_FAILURE);
+        }
+    #endif
+}
+
 int do_nothing(void* a){
     (void)a;
     return 0;
