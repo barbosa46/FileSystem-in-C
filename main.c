@@ -30,8 +30,10 @@ void shift_left(char array[MAX_COMMANDS][MAX_INPUT_SIZE]) {
     for(i = 0; i < numberCommands; ++i)
         strcpy(array[i], array[i+1]);
 
-    for(i = numberCommands; i < MAX_COMMANDS; ++i)
-        strcpy(array[i],"f");
+    #if defined (RWLOCK) || defined (MUTEX)
+        for(i = numberCommands; i < MAX_COMMANDS; ++i)
+            strcpy(array[i],"f");
+    #endif
 }
 
 static void displayUsage(const char* appName) {
@@ -80,6 +82,10 @@ char* removeCommand() {
     strcpy(data, inputCommands[0]);
     numberCommands--;
     shift_left(inputCommands);
+
+    #if !defined (RWLOCK) || !defined (MUTEX)
+        if(numberCommands == 0) strcpy(inputCommands[0], "f");
+    #endif
 
     mutex_unlock(&semMut);
     post_sem(&semprod);
