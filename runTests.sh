@@ -13,7 +13,7 @@ numbuckets="${4}"
 
 if ! [ -d "${inputdir}" ]
 then
-    echo "Error:" "${inputdir}" "does not exist!"
+    echo "Error:" "${inputdir}" "does not exist or is not a valid directory!"
     exit 1
 fi
 if ! [ -d "${outputdir}" ]
@@ -30,7 +30,7 @@ do
 
     for threads in $(seq 2 ${maxthreads})
     do
-        echo "InputFile=""${input}" "NumThreads=​${threads}"
+        echo "InputFile=""${input}" "NumThreads=""​${threads}"
         ./tecnicofs-mutex ${inputdir}/${input} ${outputdir}/${input%.*}-${threads}.txt \
         ${threads} ${numbuckets} | grep "TecnicoFS completed in"
         echo ""
