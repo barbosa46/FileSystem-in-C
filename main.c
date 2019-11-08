@@ -1,0 +1,333 @@
+/* Sistemas Operativos, DEI/IST/ULisboa 2019-20 */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <pthread.h>
+#include <semaphore.h>
+#include "fs.h"
+#include "constants.h"
+#include "lib/timer.h"
+#include "sync.h"
+
+char* global_inputFile = NULL;
+char* global_outputFile = NULL;
+int numberThreads = 0;
+int numBuckets = 0;
+pthread_mutex_t commandsLock, semMut;
+sem_t semprod, semcons;
+tecnicofs* fs;
+
+char inputCommands[MAX_COMMANDS][MAX_INPUT_SIZE];
+int numberCommands = 0;
+int headQueue = 0;
+int syncro = 0;
+int kill = 0;
+
+void shift_left(char array[MAX_COMMANDS][MAX_INPUT_SIZE]) {
+    int i;
+
+    for(i = 0; i < numberCommands; ++i)
+        strcpy(array[i], array[i+1]);
+
+    #if defined (RWLOCK) || defined (MUTEX)
+        for(i = numberCommands; i < MAX_COMMANDS; ++i)
+            strcpy(array[i],"f");
+    #endif
+}
+
+static void displayUsage(const char* appName) {
+    printf("Usage: %s input_filepath output_filepath threads_number buckets_number\n",
+            appName);
+    exit(EXIT_FAILURE);
+}
+
+static void parseArgs(long argc, char* const argv[]) {
+    if (argc != 5) {
+        fprintf(stderr, "Invalid format:\n");
+        displayUsage(argv[0]);
+    }
+
+    global_inputFile = argv[1];
+    global_outputFile = argv[2];
+
+    numberThreads = atoi(argv[3]);
+    if (!numberThreads) {
+        fprintf(stderr, "Invalid number of threads.\n");
+        displayUsage(argv[0]);
+    }
+
+    numBuckets = atoi(argv[4]);
+    if(!numBuckets){
+        fprintf(stderr,"Invalid number of buckets.\n");
+        displayUsage(argv[0]);
+    }
+}
+
+void insertCommand(char* data) {
+    wait_sem(&semprod);
+    mutex_lock(&semMut);
+
+    strcpy(inputCommands[numberCommands++], data);
+
+    mutex_unlock(&semMut);
+    post_sem(&semcons);
+}
+
+char* removeCommand() {
+    wait_sem(&semcons);
+    mutex_lock(&semMut);
+
+    char *data = (char*) malloc(sizeof(char) * (strlen(inputCommands[0]) + 1));
+    strcpy(data, inputCommands[0]);
+    numberCommands--;
+    shift_left(inputCommands);
+
+    #if !defined (RWLOCK) || !defined (MUTEX)
+        if(numberCommands == 0) strcpy(inputCommands[0], "f");
+    #endif
+
+    mutex_unlock(&semMut);
+    post_sem(&semprod);
+
+    return data;
+}
+
+void errorParse(int lineNumber) {
+    fprintf(stderr, "Error: line %d invalid\n", lineNumber);
+    exit(EXIT_FAILURE);
+}
+
+void * processInput() {
+    FILE* inputFile;
+
+    inputFile = fopen(global_inputFile, "r");
+    if (!inputFile) {
+        fprintf(stderr, "Error: Could not read %s\n", global_inputFile);
+        exit(EXIT_FAILURE);
+    }
+
+    char line[MAX_INPUT_SIZE];
+    int lineNumber = 0;
+
+    shift_left(inputCommands);
+
+    while(fgets(line, sizeof(line)/sizeof(char), inputFile)) {
+        char token;
+        char name[MAX_INPUT_SIZE];
+        char name1[MAX_INPUT_SIZE];
+        char name2[MAX_INPUT_SIZE];
+
+        lineNumber++;
+        int rTokens = 0;
+        int numTokens = sscanf(line, "%c %s", &token, name);
+
+        /* perform minimal validation */
+        if (numTokens < 1) {
+            continue;
+        }
+
+        switch (token) {
+            case 'c':
+            case 'l':
+            case 'd':
+                if (numTokens != 2)
+                    errorParse(lineNumber);
+
+                insertCommand(line);
+
+                break;
+            case 'r':
+                rTokens = sscanf(name,"%s %s",name1,name2);
+                if (numTokens + rTokens != 3)
+                    errorParse(lineNumber);
+
+                insertCommand(line);
+
+                break;
+            case '#':
+                break;
+            default: { /* error */
+                errorParse(lineNumber);
+            }
+        }
+    }
+
+    mutex_lock(&commandsLock);
+    kill = 1;
+    mutex_unlock(&commandsLock);
+
+    fclose(inputFile);
+
+    return NULL;
+}
+
+FILE * openOutputFile() {
+    FILE *fp;
+
+    fp = fopen(global_outputFile, "w");
+    if (fp == NULL) {
+        perror("Error opening output file");
+        exit(EXIT_FAILURE);
+    }
+
+    return fp;
+}
+
+void * applyCommands() {
+    while (1) {
+        mutex_lock(&commandsLock);
+
+        if (kill != 1 || inputCommands[0][0] != 'f') {
+            char* command;
+
+            if (strcmp(inputCommands[0], "f") != 0) command = removeCommand();
+            else {
+                command = (char*) malloc(sizeof(char) * 2);
+                strcpy(command,"f");
+            }
+
+            if (command == NULL) {
+                mutex_unlock(&commandsLock);
+                return NULL;
+            }
+
+            char token;
+            char name[MAX_INPUT_SIZE];
+            sscanf(command, "%c %s", &token, name);
+            int iNumber;
+
+            switch (token) {
+                case 'c':
+                    iNumber = obtainNewInumber(fs);
+                    mutex_unlock(&commandsLock);
+
+                    create(fs, name, iNumber);
+
+                    break;
+                case 'l':
+                    mutex_unlock(&commandsLock);
+
+                    int searchResult = lookup(fs, name);
+                    if (!searchResult)
+                        printf("%s not found\n", name);
+                    else
+                        printf("%s found with inumber %d\n", name, searchResult);
+
+                    break;
+                case 'd':
+                    mutex_unlock(&commandsLock);
+
+                    iNumber = lookup(fs,name);
+                    if (!iNumber)
+                        printf("%s not found\n", name);
+                    else
+                        delete(fs, name);
+
+                    break;
+                case 'r':
+                    mutex_unlock(&commandsLock);
+
+                    char name1[MAX_INPUT_SIZE], name2[MAX_INPUT_SIZE];
+                    sscanf(command,"%c %s %s", &token, name1, name2);
+                    iNumber = lookup(fs, name1);
+                    int exists = lookup(fs, name2);
+
+                    if (!iNumber)
+                        printf("%s not found\n", name1);
+                    else if (exists)
+                        printf("%s already exists\n", name2);
+                    else
+                        renameFile(fs, name1, name2, iNumber);
+
+                    break;
+                case 'f':
+                    mutex_unlock(&commandsLock);
+
+                    break;
+                default: { /* error */
+                    mutex_unlock(&commandsLock);
+
+                    fprintf(stderr, "Error: commands to apply\n");
+                    exit(EXIT_FAILURE);
+                }
+            }
+            free(command);
+        } else {
+            mutex_unlock(&commandsLock);
+            return NULL;
+        }
+    }
+}
+
+void runThreads(FILE* timeFp){
+    TIMER_T startTime, stopTime;
+    #if defined (RWLOCK) || defined (MUTEX)
+        pthread_t writer;
+        pthread_t* workers = (pthread_t*) malloc(numberThreads * sizeof(pthread_t));
+    #endif
+
+    TIMER_READ(startTime);
+
+    #if defined (RWLOCK) || defined (MUTEX)
+        if (pthread_create(&writer, NULL, processInput, NULL) != 0){
+            perror("Can't create thread");
+            exit(EXIT_FAILURE);
+        }
+        for (int i = 0; i < numberThreads; i++) {
+            int err = pthread_create(&workers[i], NULL, applyCommands, NULL);
+            if (err != 0){
+                perror("Can't create thread");
+                exit(EXIT_FAILURE);
+            }
+        }
+
+        if (pthread_join(writer, NULL))
+            perror("Can't join thread");
+        for (int i = 0; i < numberThreads; i++) {
+            if (pthread_join(workers[i], NULL))
+                perror("Can't join thread");
+        }
+
+    #else
+        processInput();
+        applyCommands();
+    #endif
+
+    TIMER_READ(stopTime);
+    fprintf(timeFp, "\nTecnicoFS completed in %.4f seconds.\n",
+            TIMER_DIFF_SECONDS(startTime, stopTime));
+
+    #if defined (RWLOCK) || defined (MUTEX)
+        free(workers);
+    #endif
+}
+
+int main(int argc, char* argv[]) {
+    #if defined (RWLOCK) || defined (MUTEX)
+        syncro = 1;
+    #endif
+
+    parseArgs(argc, argv);
+
+    mutex_init(&semMut);
+    init_sem(&semprod, MAX_COMMANDS);
+    init_sem(&semcons, 0);
+    mutex_init(&commandsLock);
+
+    FILE * outputFp = openOutputFile();
+    fs = new_tecnicofs();
+
+    runThreads(stdout);
+    print_tecnicofs_tree(outputFp, fs);
+    fflush(outputFp);
+    fclose(outputFp);
+
+    destroy_sem(&semcons);
+    destroy_sem(&semprod);
+    mutex_destroy(&commandsLock);
+
+    free_tecnicofs(fs);
+
+    exit(EXIT_SUCCESS);
+}
