@@ -21,17 +21,14 @@ tecnicofs* fs;
 char inputCommands[MAX_COMMANDS][MAX_INPUT_SIZE];
 int numberCommands = 0;
 int headQueue = 0;
-int syncro = 0;
-int kill = 0;
+int kill = 0;   // 0 if still processing input, 1 otherwise
 
+//shift_left the arrays commands by 1 position, filling the last position with "f" (n=number of threads)
 void shift_left(char array[MAX_COMMANDS][MAX_INPUT_SIZE]) {
     int i;
 
     for(i = 0; i < numberCommands; ++i)
         strcpy(array[i], array[i+1]);
-
-    for(i = numberCommands; i < MAX_COMMANDS; ++i)
-        strcpy(array[i],"f");
 }
 
 static void displayUsage(const char* appName) {
@@ -80,7 +77,8 @@ char* removeCommand() {
     strcpy(data, inputCommands[0]);
     numberCommands--;
     shift_left(inputCommands);
-
+    if(numberCommands==0)
+        strcpy(inputCommands[0],"f");
     mutex_unlock(&semMut);
     post_sem(&semprod);
 
@@ -146,11 +144,10 @@ void * processInput() {
             }
         }
     }
-
+    //
     mutex_lock(&commandsLock);
     kill = 1;
     mutex_unlock(&commandsLock);
-
     fclose(inputFile);
 
     return NULL;
@@ -174,32 +171,26 @@ void * applyCommands() {
 
         if (kill != 1 || inputCommands[0][0] != 'f') {
             char* command;
-
-            if (strcmp(inputCommands[0], "f") != 0) command = removeCommand();
-            else {
-                command = (char*) malloc(sizeof(char) * 2);
-                strcpy(command,"f");
-            }
-
-            if (command == NULL) {
-                mutex_unlock(&commandsLock);
-                return NULL;
-            }
-
-            char token;
+            char token=inputCommands[0][0];
             char name[MAX_INPUT_SIZE];
-            sscanf(command, "%c %s", &token, name);
             int iNumber;
-
+    
             switch (token) {
                 case 'c':
+                    command = removeCommand();
+                    sscanf(command, "%c %s", &token, name);
+                   
                     iNumber = obtainNewInumber(fs);
                     mutex_unlock(&commandsLock);
 
                     create(fs, name, iNumber);
 
+                    free(command);
                     break;
                 case 'l':
+                    command = removeCommand();
+                    sscanf(command, "%c %s", &token, name);
+
                     mutex_unlock(&commandsLock);
 
                     int searchResult = lookup(fs, name);
@@ -207,9 +198,13 @@ void * applyCommands() {
                         printf("%s not found\n", name);
                     else
                         printf("%s found with inumber %d\n", name, searchResult);
-
+                    
+                    free(command);
                     break;
                 case 'd':
+                    command = removeCommand();
+                    sscanf(command, "%c %s", &token, name);
+
                     mutex_unlock(&commandsLock);
 
                     iNumber = lookup(fs,name);
@@ -218,24 +213,30 @@ void * applyCommands() {
                     else
                         delete(fs, name);
 
+                    free(command);
                     break;
                 case 'r':
-                    mutex_unlock(&commandsLock);
-
+                    command = removeCommand();
                     char name1[MAX_INPUT_SIZE], name2[MAX_INPUT_SIZE];
                     sscanf(command,"%c %s %s", &token, name1, name2);
+                    
+                    mutex_unlock(&commandsLock);
+
+                    // Verificate if booth name files are in use                   
                     iNumber = lookup(fs, name1);
                     int exists = lookup(fs, name2);
-
                     if (!iNumber)
                         printf("%s not found\n", name1);
                     else if (exists)
                         printf("%s already exists\n", name2);
+                    //Rename it
                     else
                         renameFile(fs, name1, name2, iNumber);
 
+                    free(command);
                     break;
                 case 'f':
+                    //do nothing
                     mutex_unlock(&commandsLock);
 
                     break;
@@ -246,7 +247,6 @@ void * applyCommands() {
                     exit(EXIT_FAILURE);
                 }
             }
-            free(command);
         } else {
             mutex_unlock(&commandsLock);
             return NULL;
@@ -298,10 +298,6 @@ void runThreads(FILE* timeFp){
 }
 
 int main(int argc, char* argv[]) {
-    #if defined (RWLOCK) || defined (MUTEX)
-        syncro = 1;
-    #endif
-
     parseArgs(argc, argv);
 
     mutex_init(&semMut);
