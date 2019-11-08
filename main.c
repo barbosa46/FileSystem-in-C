@@ -77,7 +77,7 @@ char* removeCommand() {
     mutex_lock(&semMut);
 
     char *data = (char*) malloc(sizeof(char) * (strlen(inputCommands[0]) + 1));
-    strcpy(data,inputCommands[0]);
+    strcpy(data, inputCommands[0]);
     numberCommands--;
     shift_left(inputCommands);
 
@@ -258,7 +258,7 @@ void runThreads(FILE* timeFp){
     TIMER_T startTime, stopTime;
     #if defined (RWLOCK) || defined (MUTEX)
         pthread_t writer;
-        pthread_t* workers =(pthread_t*) malloc(numberThreads * sizeof(pthread_t));
+        pthread_t* workers = (pthread_t*) malloc(numberThreads * sizeof(pthread_t));
     #endif
 
     TIMER_READ(startTime);

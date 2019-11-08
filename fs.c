@@ -69,11 +69,13 @@ int lookup(tecnicofs* fs, char *name) {
 	int key = hash(name, numBuckets);
 
 	sync_rdlock(&(fs->bsts[key].bstLock));
+
 	int inumber = 0;
 	node* searchNode = search(fs->bsts[key].bstRoot, name);
-	if ( searchNode ) {
+	if (searchNode) {
 		inumber = searchNode->inumber;
 	}
+	
 	sync_unlock(&(fs->bsts[key].bstLock));
 
 	return inumber;
