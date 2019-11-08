@@ -20,10 +20,9 @@ tecnicofs* fs;
 
 char inputCommands[MAX_COMMANDS][MAX_INPUT_SIZE];
 int numberCommands = 0;
-int headQueue = 0;
 int kill = 0;   // 0 if still processing input, 1 otherwise
 
-//shift_left the arrays commands by 1 position, filling the last position with "f" (n=number of threads)
+//shift_left the arrays commands by 1 position
 void shift_left(char array[MAX_COMMANDS][MAX_INPUT_SIZE]) {
     int i;
 
@@ -79,6 +78,7 @@ char* removeCommand() {
     shift_left(inputCommands);
     if(numberCommands==0)
         strcpy(inputCommands[0],"f");
+
     mutex_unlock(&semMut);
     post_sem(&semprod);
 
@@ -144,7 +144,7 @@ void * processInput() {
             }
         }
     }
-    //
+    //Process input ended, increase the flag
     mutex_lock(&commandsLock);
     kill = 1;
     mutex_unlock(&commandsLock);
@@ -168,11 +168,11 @@ FILE * openOutputFile() {
 void * applyCommands() {
     while (1) {
         mutex_lock(&commandsLock);
-
+        //if is still receiving commands OR still has commands to execute
         if (kill != 1 || inputCommands[0][0] != 'f') {
             char* command;
             char token=inputCommands[0][0];
-            char name[MAX_INPUT_SIZE];
+            char name[MAX_INPUT_SIZE],name2[MAX_INPUT_SIZE];
             int iNumber;
     
             switch (token) {
@@ -217,21 +217,20 @@ void * applyCommands() {
                     break;
                 case 'r':
                     command = removeCommand();
-                    char name1[MAX_INPUT_SIZE], name2[MAX_INPUT_SIZE];
-                    sscanf(command,"%c %s %s", &token, name1, name2);
+                    sscanf(command,"%c %s %s", &token, name, name2);
                     
                     mutex_unlock(&commandsLock);
 
                     // Verificate if booth name files are in use                   
-                    iNumber = lookup(fs, name1);
+                    iNumber = lookup(fs, name);
                     int exists = lookup(fs, name2);
                     if (!iNumber)
-                        printf("%s not found\n", name1);
+                        printf("%s not found\n", name);
                     else if (exists)
                         printf("%s already exists\n", name2);
                     //Rename it
                     else
-                        renameFile(fs, name1, name2, iNumber);
+                        renameFile(fs, name, name2, iNumber);
 
                     free(command);
                     break;

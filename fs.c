@@ -85,6 +85,7 @@ void renameFile(tecnicofs* fs, char *name1, char* name2, int iNumber) {
 	int key1 = hash(name1, numBuckets);
 	int key2 = hash(name2, numBuckets);
 
+	//force to always lock the tree with the lower key first
 	if (key1 > key2) { int temp = key1; key1 = key2; key2 = temp; }
 
 	sync_wrlock(&(fs->bsts[key1].bstLock));
