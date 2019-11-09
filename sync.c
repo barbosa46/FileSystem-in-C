@@ -50,7 +50,7 @@ void mutex_init(pthread_mutex_t* mutex) {
     #if defined (RWLOCK) || defined (MUTEX)
         int ret = pthread_mutex_init(mutex, NULL);
         if(ret != 0){
-            perror("mutex_init failed\n");
+            perror("mutex_init failed");
             exit(EXIT_FAILURE);
         }
     #endif
@@ -60,7 +60,7 @@ void mutex_destroy(pthread_mutex_t* mutex) {
     #if defined (RWLOCK) || defined (MUTEX)
         int ret = pthread_mutex_destroy(mutex);
         if(ret != 0){
-            perror("mutex_destroy failed\n");
+            perror("mutex_destroy failed");
             exit(EXIT_FAILURE);
         }
     #endif
@@ -90,7 +90,7 @@ void init_sem(sem_t* sem, int value) {
     #if defined (RWLOCK) || defined (MUTEX)
         int ret = sem_init(sem, 0, value);
         if (ret != 0) {
-            perror("sem_init failed\n");
+            perror("sem_init failed");
             exit(EXIT_FAILURE);
         }
     #endif
@@ -100,7 +100,7 @@ void destroy_sem(sem_t* sem) {
     #if defined (RWLOCK) || defined (MUTEX)
         int ret = sem_destroy(sem);
         if (ret != 0) {
-            perror("sem_destroy failed\n");
+            perror("sem_destroy failed");
             exit(EXIT_FAILURE);
         }
     #endif
@@ -110,7 +110,7 @@ void wait_sem(sem_t* sem) {
     #if defined (RWLOCK) || defined (MUTEX)
         int ret = sem_wait(sem);
         if (ret != 0) {
-            perror("sem_wait failed\n");
+            perror("sem_wait failed");
             exit(EXIT_FAILURE);
         }
     #endif
@@ -120,7 +120,7 @@ void trywait_sem(sem_t* sem) {
     #if defined (RWLOCK) || defined (MUTEX)
         int ret = sem_trywait(sem);
         if (ret != 0) {
-            perror("sem_trywait failed\n");
+            perror("sem_trywait failed");
             exit(EXIT_FAILURE);
         }
     #endif
@@ -130,7 +130,7 @@ void post_sem(sem_t* sem) {
     #if defined (RWLOCK) || defined (MUTEX)
         int ret = sem_post(sem);
         if(ret != 0) {
-            perror("sem_post failed\n");
+            perror("sem_post failed");
             exit(EXIT_FAILURE);
         }
     #endif

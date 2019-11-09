@@ -30,6 +30,7 @@ tecnicofs* new_tecnicofs() {
 
 	fs->nextINumber = 0;
 	for (i = 0; i < numBuckets; i++) {
+		/* bst initialization */
 		fs->bsts[i].bstRoot = NULL;
 		sync_init(&(fs->bsts[i].bstLock));
 	}
@@ -41,6 +42,7 @@ void free_tecnicofs(tecnicofs* fs) {
 	int i;
 
 	for (i = 0; i < numBuckets; i++) {
+		/* free memory used by bst */
 		free_tree(fs->bsts[i].bstRoot);
 		sync_destroy(&(fs->bsts[i].bstLock));
 	}
@@ -75,7 +77,7 @@ int lookup(tecnicofs* fs, char *name) {
 	if (searchNode) {
 		inumber = searchNode->inumber;
 	}
-	
+
 	sync_unlock(&(fs->bsts[key].bstLock));
 
 	return inumber;
@@ -85,14 +87,14 @@ void renameFile(tecnicofs* fs, char *name1, char* name2, int iNumber) {
 	int key1 = hash(name1, numBuckets);
 	int key2 = hash(name2, numBuckets);
 
-	//force to always lock the tree with the lower key first
+	/* always locks lower hash first */
 	if (key1 > key2) { int temp = key1; key1 = key2; key2 = temp; }
 
 	sync_wrlock(&(fs->bsts[key1].bstLock));
-	if(key1 != key2) sync_wrlock(&(fs->bsts[key2].bstLock));
+	if(key1 != key2) sync_wrlock(&(fs->bsts[key2].bstLock)); /* check if bst is different */
 
-	fs->bsts[key1].bstRoot = remove_item(fs->bsts[key1].bstRoot, name1); //delete
-	fs->bsts[key2].bstRoot = insert(fs->bsts[key2].bstRoot, name2, iNumber); //create
+	fs->bsts[key1].bstRoot = remove_item(fs->bsts[key1].bstRoot, name1); /* delete */
+	fs->bsts[key2].bstRoot = insert(fs->bsts[key2].bstRoot, name2, iNumber); /* create */
 
 	sync_unlock(&(fs->bsts[key1].bstLock));
 	if(key1 != key2) sync_unlock(&(fs->bsts[key2].bstLock));
@@ -102,6 +104,7 @@ void print_tecnicofs_tree(FILE * fp, tecnicofs *fs) {
 	int i;
 
 	for (i = 0; i < numBuckets; i++) {
+		/* print all non-null bsts */
 		if (fs->bsts[i].bstRoot)
 			print_tree(fp, fs->bsts[i].bstRoot);
 	}

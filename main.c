@@ -14,22 +14,24 @@ char* global_inputFile = NULL;
 char* global_outputFile = NULL;
 int numberThreads = 0;
 int numBuckets = 0;
+
 pthread_mutex_t commandsLock, semMut;
 sem_t semprod, semcons;
+
 tecnicofs* fs;
 
 char inputCommands[MAX_COMMANDS][MAX_INPUT_SIZE];
 int numberCommands = 0;
-int headQueue = 0;
-int syncro = 0;
-int kill = 0;
+int kill = 0;   /* signals if still processing input */
 
 void shift_left(char array[MAX_COMMANDS][MAX_INPUT_SIZE]) {
     int i;
 
+    /* shifts left the command array by 1 */
     for(i = 0; i < numberCommands; ++i)
-        strcpy(array[i], array[i+1]);
+        strcpy(array[i], array[i + 1]);
 
+    /* fills empty positions with flag 'f' if in sync version */
     #if defined (RWLOCK) || defined (MUTEX)
         for(i = numberCommands; i < MAX_COMMANDS; ++i)
             strcpy(array[i],"f");
@@ -78,11 +80,13 @@ char* removeCommand() {
     wait_sem(&semcons);
     mutex_lock(&semMut);
 
+    /* extract command */
     char *data = (char*) malloc(sizeof(char) * (strlen(inputCommands[0]) + 1));
     strcpy(data, inputCommands[0]);
     numberCommands--;
     shift_left(inputCommands);
 
+    /* uses flag 'f' to signal EOF in no-sync version */
     #if !defined (RWLOCK) || !defined (MUTEX)
         if(numberCommands == 0) strcpy(inputCommands[0], "f");
     #endif
@@ -137,8 +141,8 @@ void * processInput() {
                 insertCommand(line);
 
                 break;
-            case 'r':
-                rTokens = sscanf(name,"%s %s",name1,name2);
+            case 'r':   /* special case for 'r' (3 tokens allowed) */
+                rTokens = sscanf(name,"%s %s", name1, name2);
                 if (numTokens + rTokens != 3)
                     errorParse(lineNumber);
 
@@ -154,7 +158,7 @@ void * processInput() {
     }
 
     mutex_lock(&commandsLock);
-    kill = 1;
+    kill = 1;       /* signal end of input processing */
     mutex_unlock(&commandsLock);
 
     fclose(inputFile);
@@ -178,13 +182,14 @@ void * applyCommands() {
     while (1) {
         mutex_lock(&commandsLock);
 
+        /* check if still receiving commands or still has commands to execute */
         if (kill != 1 || inputCommands[0][0] != 'f') {
             char* command;
 
             if (strcmp(inputCommands[0], "f") != 0) command = removeCommand();
             else {
                 command = (char*) malloc(sizeof(char) * 2);
-                strcpy(command,"f");
+                strcpy(command, "f");
             }
 
             if (command == NULL) {
@@ -230,18 +235,20 @@ void * applyCommands() {
 
                     char name1[MAX_INPUT_SIZE], name2[MAX_INPUT_SIZE];
                     sscanf(command,"%c %s %s", &token, name1, name2);
+
+                    /* verify if files exist */
                     iNumber = lookup(fs, name1);
                     int exists = lookup(fs, name2);
 
-                    if (!iNumber)
+                    if (!iNumber)   /* if file 1 does not exist */
                         printf("%s not found\n", name1);
-                    else if (exists)
+                    else if (exists)    /* if file 2 is already in use */
                         printf("%s already exists\n", name2);
                     else
                         renameFile(fs, name1, name2, iNumber);
 
                     break;
-                case 'f':
+                case 'f':   /* flag test */
                     mutex_unlock(&commandsLock);
 
                     break;
@@ -304,10 +311,6 @@ void runThreads(FILE* timeFp){
 }
 
 int main(int argc, char* argv[]) {
-    #if defined (RWLOCK) || defined (MUTEX)
-        syncro = 1;
-    #endif
-
     parseArgs(argc, argv);
 
     mutex_init(&semMut);
@@ -323,9 +326,10 @@ int main(int argc, char* argv[]) {
     fflush(outputFp);
     fclose(outputFp);
 
+    mutex_destroy(&commandsLock);
     destroy_sem(&semcons);
     destroy_sem(&semprod);
-    mutex_destroy(&commandsLock);
+    mutex_destroy(&semMut);
 
     free_tecnicofs(fs);
 
