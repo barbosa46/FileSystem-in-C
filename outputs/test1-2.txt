@@ -1,0 +1,11 @@
+
+  d
+    h
+
+  e
+
+  b
+    f
+      renamed
+
+  g

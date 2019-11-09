@@ -85,14 +85,16 @@ void renameFile(tecnicofs* fs, char *name1, char* name2, int iNumber) {
 	int key1 = hash(name1, numBuckets);
 	int key2 = hash(name2, numBuckets);
 
-	//force to always lock the tree with the lower key first
+	// force to always lock the tree with lower key first
 	if (key1 > key2) { int temp = key1; key1 = key2; key2 = temp; }
-
+	
+	// lock the first
 	sync_wrlock(&(fs->bsts[key1].bstLock));
+	// lock the second if is different
 	if(key1 != key2) sync_wrlock(&(fs->bsts[key2].bstLock));
 
-	fs->bsts[key1].bstRoot = remove_item(fs->bsts[key1].bstRoot, name1); //delete
-	fs->bsts[key2].bstRoot = insert(fs->bsts[key2].bstRoot, name2, iNumber); //create
+	fs->bsts[key1].bstRoot = remove_item(fs->bsts[key1].bstRoot, name1); // delete
+	fs->bsts[key2].bstRoot = insert(fs->bsts[key2].bstRoot, name2, iNumber); // create
 
 	sync_unlock(&(fs->bsts[key1].bstLock));
 	if(key1 != key2) sync_unlock(&(fs->bsts[key2].bstLock));

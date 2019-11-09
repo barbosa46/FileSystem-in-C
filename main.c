@@ -1,5 +1,9 @@
 /* Sistemas Operativos, DEI/IST/ULisboa 2019-20 */
-
+/* In order to simplify the access from the threads to the commands array,
+   the commands will be inserted to the tail and removed from the head,
+   when a command is removed, all the positions are shifted to the left,
+   when the array is empty, the head has the command 'f'.
+   The head and the tail are designed by the variables head and numberCommands.*/
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,16 +23,9 @@ sem_t semprod, semcons;
 tecnicofs* fs;
 
 char inputCommands[MAX_COMMANDS][MAX_INPUT_SIZE];
-int numberCommands = 0;
+int numberCommands = 0; // Tail of the commands array (first empty slot)
+int head = 0;   // Head of the commands array
 int kill = 0;   // 0 if still processing input, 1 otherwise
-
-//shift_left the arrays commands by 1 position
-void shift_left(char array[MAX_COMMANDS][MAX_INPUT_SIZE]) {
-    int i;
-
-    for(i = 0; i < numberCommands; ++i)
-        strcpy(array[i], array[i+1]);
-}
 
 static void displayUsage(const char* appName) {
     printf("Usage: %s input_filepath output_filepath threads_number buckets_number\n",
@@ -61,6 +58,8 @@ static void parseArgs(long argc, char* const argv[]) {
 void insertCommand(char* data) {
     wait_sem(&semprod);
     mutex_lock(&semMut);
+    // keep numberCommands in boundarys
+    if(numberCommands==MAX_COMMANDS)numberCommands=0;
 
     strcpy(inputCommands[numberCommands++], data);
 
@@ -73,11 +72,14 @@ char* removeCommand() {
     mutex_lock(&semMut);
 
     char *data = (char*) malloc(sizeof(char) * (strlen(inputCommands[0]) + 1));
-    strcpy(data, inputCommands[0]);
-    numberCommands--;
-    shift_left(inputCommands);
-    if(numberCommands==0)
-        strcpy(inputCommands[0],"f");
+    strcpy(data, inputCommands[head]);
+    
+    // keep head in boundarys
+    if(++head==MAX_COMMANDS)head=0;
+    // if there are no more commands to read, set the null command
+    if(numberCommands==head)
+        strcpy(inputCommands[head],"f");
+    
 
     mutex_unlock(&semMut);
     post_sem(&semprod);
@@ -163,13 +165,18 @@ FILE * openOutputFile() {
     return fp;
 }
 
+/*
+A thread always tries to remove the head command in the array,
+if it is the null command ('f'), it wont do nothing.*/
 void * applyCommands() {
     while (1) {
         mutex_lock(&commandsLock);
-        //if is still receiving commands OR still has commands to execute
-        if (kill != 1 || inputCommands[0][0] != 'f') {
+
+        //if array is still receiving commands(processInput in execution) 
+        //OR array still has commands to execute
+        if (kill != 1 || inputCommands[head][0] != 'f') {
             char* command;
-            char token=inputCommands[0][0];
+            char token=inputCommands[head][0];
             char name[MAX_INPUT_SIZE],name2[MAX_INPUT_SIZE];
             int iNumber;
             switch (token) {
@@ -178,6 +185,7 @@ void * applyCommands() {
                     sscanf(command, "%c %s", &token, name);
                    
                     iNumber = obtainNewInumber(fs);
+                    
                     mutex_unlock(&commandsLock);
 
                     create(fs, name, iNumber);
@@ -218,7 +226,7 @@ void * applyCommands() {
                     
                     mutex_unlock(&commandsLock);
 
-                    // Verificate if booth name files are in use                   
+                    // Verificate if booth file names are in use                   
                     iNumber = lookup(fs, name);
                     int exists = lookup(fs, name2);
                     if (!iNumber)
@@ -304,7 +312,7 @@ int main(int argc, char* argv[]) {
     FILE * outputFp = openOutputFile();
     fs = new_tecnicofs();
 
-    //initialize the first command with defined null command
+    //initialize the first command with null command ('f')
     inputCommands[0][0]='f';
     
     runThreads(stdout);
