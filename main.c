@@ -102,8 +102,6 @@ void * processInput() {
     char line[MAX_INPUT_SIZE];
     int lineNumber = 0;
 
-    shift_left(inputCommands);
-
     while(fgets(line, sizeof(line)/sizeof(char), inputFile)) {
         char token;
         char name[MAX_INPUT_SIZE];
@@ -174,7 +172,6 @@ void * applyCommands() {
             char token=inputCommands[0][0];
             char name[MAX_INPUT_SIZE],name2[MAX_INPUT_SIZE];
             int iNumber;
-    
             switch (token) {
                 case 'c':
                     command = removeCommand();
@@ -298,7 +295,7 @@ void runThreads(FILE* timeFp){
 
 int main(int argc, char* argv[]) {
     parseArgs(argc, argv);
-
+    
     mutex_init(&semMut);
     init_sem(&semprod, MAX_COMMANDS);
     init_sem(&semcons, 0);
@@ -307,6 +304,9 @@ int main(int argc, char* argv[]) {
     FILE * outputFp = openOutputFile();
     fs = new_tecnicofs();
 
+    //initialize the first command with defined null command
+    inputCommands[0][0]='f';
+    
     runThreads(stdout);
     print_tecnicofs_tree(outputFp, fs);
     fflush(outputFp);
