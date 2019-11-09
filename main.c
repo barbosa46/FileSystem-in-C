@@ -21,22 +21,10 @@ sem_t semprod, semcons;
 tecnicofs* fs;
 
 char inputCommands[MAX_COMMANDS][MAX_INPUT_SIZE];
-int numberCommands = 0;
+int numberCommands = 0;   /* tail of commands array (first empty slot) */
+int head = 0;   /* head of commands array */
 int kill = 0;   /* signals if still processing input */
 
-void shift_left(char array[MAX_COMMANDS][MAX_INPUT_SIZE]) {
-    int i;
-
-    /* shifts left the command array by 1 */
-    for(i = 0; i < numberCommands; ++i)
-        strcpy(array[i], array[i + 1]);
-
-    /* fills empty positions with flag 'f' if in sync version */
-    #if defined (RWLOCK) || defined (MUTEX)
-        for(i = numberCommands; i < MAX_COMMANDS; ++i)
-            strcpy(array[i],"f");
-    #endif
-}
 
 static void displayUsage(const char* appName) {
     printf("Usage: %s input_filepath output_filepath threads_number buckets_number\n",
@@ -70,6 +58,9 @@ void insertCommand(char* data) {
     wait_sem(&semprod);
     mutex_lock(&semMut);
 
+    /* keep numberCommands in boundaries */
+    if (numberCommands == MAX_COMMANDS) numberCommands = 0;
+
     strcpy(inputCommands[numberCommands++], data);
 
     mutex_unlock(&semMut);
@@ -80,16 +71,14 @@ char* removeCommand() {
     wait_sem(&semcons);
     mutex_lock(&semMut);
 
-    /* extract command */
     char *data = (char*) malloc(sizeof(char) * (strlen(inputCommands[0]) + 1));
-    strcpy(data, inputCommands[0]);
-    numberCommands--;
-    shift_left(inputCommands);
+    strcpy(data, inputCommands[head]);
 
-    /* uses flag 'f' to signal EOF in no-sync version */
-    #if !defined (RWLOCK) || !defined (MUTEX)
-        if(numberCommands == 0) strcpy(inputCommands[0], "f");
-    #endif
+    /* keep head in boundaries */
+    if(++head == MAX_COMMANDS) head = 0;
+
+    /* set 'f' flag if no more commands in queue */
+    if(numberCommands == head) strcpy(inputCommands[head], "f");
 
     mutex_unlock(&semMut);
     post_sem(&semprod);
@@ -113,8 +102,6 @@ void * processInput() {
 
     char line[MAX_INPUT_SIZE];
     int lineNumber = 0;
-
-    shift_left(inputCommands);
 
     while(fgets(line, sizeof(line)/sizeof(char), inputFile)) {
         char token;
@@ -142,7 +129,7 @@ void * processInput() {
 
                 break;
             case 'r':   /* special case for 'r' (3 tokens allowed) */
-                rTokens = sscanf(name,"%s %s", name1, name2);
+                rTokens = sscanf(name,"%s %s",name1,name2);
                 if (numTokens + rTokens != 3)
                     errorParse(lineNumber);
 
@@ -157,8 +144,9 @@ void * processInput() {
         }
     }
 
+    /* process input ended, signal kill flag */
     mutex_lock(&commandsLock);
-    kill = 1;       /* signal end of input processing */
+    kill = 1;
     mutex_unlock(&commandsLock);
 
     fclose(inputFile);
@@ -178,39 +166,35 @@ FILE * openOutputFile() {
     return fp;
 }
 
+
 void * applyCommands() {
     while (1) {
         mutex_lock(&commandsLock);
 
-        /* check if still receiving commands or still has commands to execute */
-        if (kill != 1 || inputCommands[0][0] != 'f') {
+        /* removes head command if still processing input or executing commands */
+        if (kill != 1 || inputCommands[head][0] != 'f') {
             char* command;
-
-            if (strcmp(inputCommands[0], "f") != 0) command = removeCommand();
-            else {
-                command = (char*) malloc(sizeof(char) * 2);
-                strcpy(command, "f");
-            }
-
-            if (command == NULL) {
-                mutex_unlock(&commandsLock);
-                return NULL;
-            }
-
-            char token;
-            char name[MAX_INPUT_SIZE];
-            sscanf(command, "%c %s", &token, name);
+            char token = inputCommands[head][0];
+            char name[MAX_INPUT_SIZE], new_name[MAX_INPUT_SIZE];
             int iNumber;
 
             switch (token) {
                 case 'c':
+                    command = removeCommand();
+                    sscanf(command, "%c %s", &token, name);
+
                     iNumber = obtainNewInumber(fs);
+
                     mutex_unlock(&commandsLock);
 
                     create(fs, name, iNumber);
 
+                    free(command);
                     break;
                 case 'l':
+                    command = removeCommand();
+                    sscanf(command, "%c %s", &token, name);
+
                     mutex_unlock(&commandsLock);
 
                     int searchResult = lookup(fs, name);
@@ -219,8 +203,12 @@ void * applyCommands() {
                     else
                         printf("%s found with inumber %d\n", name, searchResult);
 
+                    free(command);
                     break;
                 case 'd':
+                    command = removeCommand();
+                    sscanf(command, "%c %s", &token, name);
+
                     mutex_unlock(&commandsLock);
 
                     iNumber = lookup(fs,name);
@@ -229,26 +217,28 @@ void * applyCommands() {
                     else
                         delete(fs, name);
 
+                    free(command);
                     break;
                 case 'r':
+                    command = removeCommand();
+                    sscanf(command,"%c %s %s", &token, name, new_name);
+
                     mutex_unlock(&commandsLock);
 
-                    char name1[MAX_INPUT_SIZE], name2[MAX_INPUT_SIZE];
-                    sscanf(command,"%c %s %s", &token, name1, name2);
-
                     /* verify if files exist */
-                    iNumber = lookup(fs, name1);
-                    int exists = lookup(fs, name2);
+                    iNumber = lookup(fs, name);
+                    int exists = lookup(fs, name);
 
                     if (!iNumber)   /* if file 1 does not exist */
-                        printf("%s not found\n", name1);
+                        printf("%s not found\n", name);
                     else if (exists)    /* if file 2 is already in use */
-                        printf("%s already exists\n", name2);
-                    else
-                        renameFile(fs, name1, name2, iNumber);
+                        printf("%s already exists\n", new_name);
+                    else    /* rename */
+                        renameFile(fs, name, new_name, iNumber);
 
+                    free(command);
                     break;
-                case 'f':   /* flag test */
+                case 'f':   /* do nothing if 'f' flag is set */
                     mutex_unlock(&commandsLock);
 
                     break;
@@ -259,7 +249,6 @@ void * applyCommands() {
                     exit(EXIT_FAILURE);
                 }
             }
-            free(command);
         } else {
             mutex_unlock(&commandsLock);
             return NULL;
@@ -320,6 +309,8 @@ int main(int argc, char* argv[]) {
 
     FILE * outputFp = openOutputFile();
     fs = new_tecnicofs();
+
+    inputCommands[0][0] = 'f';      /* init first command with 'f' flag */
 
     runThreads(stdout);
     print_tecnicofs_tree(outputFp, fs);
