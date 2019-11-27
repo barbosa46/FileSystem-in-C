@@ -6,12 +6,12 @@
 #define DELAY 5000
 
 #if defined (RWLOCK) || defined (MUTEX)
-    #define MAX_COMMANDS 10
-#else  
-    #define MAX_COMMANDS 1500
+    #define MAX_COMMANDS 10  /* max commands in queue for sync versions */
+#else
+    #define MAX_COMMANDS 150000  /* max commands for no-sync */
 #endif
 
 // if enabled => RWLOCK, else MUTEX
-//#define RWLOCK
+// #define RWLOCK
 
 #endif /* CONSTANTS_H */

@@ -36,8 +36,10 @@ char* global_inputFile = NULL;
 char* global_outputFile = NULL;
 int numberThreads = 0;
 int numBuckets = 0;
+
 pthread_mutex_t commandsLock, semMut;
 sem_t semprod, semcons;
+
 tecnicofs* fs;
 
 char inputCommands[MAX_COMMANDS][MAX_INPUT_SIZE];
@@ -76,6 +78,9 @@ static void parseArgs(long argc, char* const argv[]) {
 void insertCommand(char* data) {
     wait_sem(&semprod);
     mutex_lock(&semMut);
+
+    /* keep numberCommands in boundaries */
+    if (numberCommands == MAX_COMMANDS) numberCommands = 0;
 
     strcpy(inputCommands[numberCommands++], data);
 
@@ -148,7 +153,7 @@ void * processInput() {
                 insertCommand(line);
 
                 break;
-            case 'r':
+            case 'r':   /* special case for 'r' (3 tokens allowed) */
                 rTokens = sscanf(name,"%s %s",name1,name2);
                 if (numTokens + rTokens != 3)
                     errorParse(lineNumber);
@@ -163,10 +168,12 @@ void * processInput() {
             }
         }
     }
-    //Process input ended, increase the flag
+
+    /* process input ended, signal kill flag */
     mutex_lock(&commandsLock);
     kill = 1;
     mutex_unlock(&commandsLock);
+
     fclose(inputFile);
 
     return NULL;
@@ -184,9 +191,6 @@ FILE * openOutputFile() {
     return fp;
 }
 
-/*
-A thread always tries to remove the head command in the array,
-if it is the null command ('f'), it wont do nothing.*/
 void applyCommands(char* inputCommands) {
     mutex_lock(&commandsLock);
     char command[MAX_INPUT_SIZE];
@@ -332,9 +336,10 @@ int main(int argc, char* argv[]) {
     fflush(outputFp);
     fclose(outputFp);
 
+    mutex_destroy(&commandsLock);
     destroy_sem(&semcons);
     destroy_sem(&semprod);
-    mutex_destroy(&commandsLock);
+    mutex_destroy(&semMut);
 
     free_tecnicofs(fs);
 
