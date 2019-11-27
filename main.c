@@ -9,10 +9,28 @@
 #include <string.h>
 #include <pthread.h>
 #include <semaphore.h>
+#include <sys/un.h>
+#include <sys/types.h>
+#include <sys/socket.h>
 #include "fs.h"
 #include "constants.h"
 #include "lib/timer.h"
 #include "sync.h"
+
+#define UNIXSTR_PATH "/tmp/socket.unix.stream"
+#define MAX_THREADS 100
+
+
+struct threadArg{
+    int uID,newSockfd;
+};
+
+struct threadArg *connections[MAX_THREADS];
+struct sockaddr_un end_serv;
+
+pthread_t tid[MAX_THREADS];
+
+int sockfd,num_connects=0;
 
 char* global_inputFile = NULL;
 char* global_outputFile = NULL;
@@ -58,10 +76,11 @@ static void parseArgs(long argc, char* const argv[]) {
 void insertCommand(char* data) {
     wait_sem(&semprod);
     mutex_lock(&semMut);
-    // keep numberCommands in boundarys
-    if(numberCommands==MAX_COMMANDS)numberCommands=0;
 
     strcpy(inputCommands[numberCommands++], data);
+
+    // keep numberCommands in boundarys
+    if(numberCommands==MAX_COMMANDS)numberCommands=0;
 
     mutex_unlock(&semMut);
     post_sem(&semcons);
@@ -73,7 +92,7 @@ char* removeCommand() {
 
     char *data = (char*) malloc(sizeof(char) * (strlen(inputCommands[0]) + 1));
     strcpy(data, inputCommands[head]);
-    
+
     // keep head in boundarys
     if(++head==MAX_COMMANDS)head=0;
     // if there are no more commands to read, set the null command
@@ -168,140 +187,121 @@ FILE * openOutputFile() {
 /*
 A thread always tries to remove the head command in the array,
 if it is the null command ('f'), it wont do nothing.*/
-void * applyCommands() {
-    while (1) {
-        mutex_lock(&commandsLock);
-
-        //if array is still receiving commands(processInput in execution) 
-        //OR array still has commands to execute
-        if (kill != 1 || inputCommands[head][0] != 'f') {
-            char* command;
-            char token=inputCommands[head][0];
-            char name[MAX_INPUT_SIZE],name2[MAX_INPUT_SIZE];
-            int iNumber;
-            switch (token) {
-                case 'c':
-                    command = removeCommand();
-                    sscanf(command, "%c %s", &token, name);
-                   
-                    iNumber = obtainNewInumber(fs);
-                    
-                    mutex_unlock(&commandsLock);
-
-                    create(fs, name, iNumber);
-
-                    free(command);
-                    break;
-                case 'l':
-                    command = removeCommand();
-                    sscanf(command, "%c %s", &token, name);
-
-                    mutex_unlock(&commandsLock);
-
-                    int searchResult = lookup(fs, name);
-                    if (!searchResult)
-                        printf("%s not found\n", name);
-                    else
-                        printf("%s found with inumber %d\n", name, searchResult);
-                    
-                    free(command);
-                    break;
-                case 'd':
-                    command = removeCommand();
-                    sscanf(command, "%c %s", &token, name);
-
-                    mutex_unlock(&commandsLock);
-
-                    iNumber = lookup(fs,name);
-                    if (!iNumber)
-                        printf("%s not found\n", name);
-                    else
-                        delete(fs, name);
-
-                    free(command);
-                    break;
-                case 'r':
-                    command = removeCommand();
-                    sscanf(command,"%c %s %s", &token, name, name2);
-                    
-                    mutex_unlock(&commandsLock);
-
-                    // Verificate if booth file names are in use                   
-                    iNumber = lookup(fs, name);
-                    int exists = lookup(fs, name2);
-                    if (!iNumber)
-                        printf("%s not found\n", name);
-                    else if (exists)
-                        printf("%s already exists\n", name2);
-                    //Rename it
-                    else
-                        renameFile(fs, name, name2, iNumber);
-
-                    free(command);
-                    break;
-                case 'f':
-                    //do nothing
-                    mutex_unlock(&commandsLock);
-
-                    break;
-                default: { /* error */
-                    mutex_unlock(&commandsLock);
-
-                    fprintf(stderr, "Error: commands to apply\n");
-                    exit(EXIT_FAILURE);
-                }
-            }
-        } else {
+void applyCommands(char* inputCommands) {
+    mutex_lock(&commandsLock);
+    char command[MAX_INPUT_SIZE];
+    strcpy(command,inputCommands);
+    char token = command[0];
+    char name[MAX_INPUT_SIZE],name2[MAX_INPUT_SIZE];
+    int iNumber;
+    switch (token) {
+        case 'c':
+            sscanf(command, "%c %s", &token, name);
+            
+            iNumber = obtainNewInumber(fs);
+            
             mutex_unlock(&commandsLock);
-            return NULL;
+
+            create(fs, name, iNumber);
+
+            break;
+        case 'l':
+            sscanf(command, "%c %s", &token, name);
+
+            mutex_unlock(&commandsLock);
+
+            int searchResult = lookup(fs, name);
+            if (!searchResult)
+                printf("%s not found\n", name);
+            else
+                printf("%s found with inumber %d\n", name, searchResult);
+            
+            break;
+        case 'd':
+            sscanf(command, "%c %s", &token, name);
+
+            mutex_unlock(&commandsLock);
+
+            iNumber = lookup(fs,name);
+            if (!iNumber)
+                printf("%s not found\n", name);
+            else
+                delete(fs, name);
+
+            break;
+        case 'r':
+            sscanf(command,"%c %s %s", &token, name, name2);
+            
+            mutex_unlock(&commandsLock);
+
+            // Verificate if booth file names are in use                   
+            iNumber = lookup(fs, name);
+            int exists = lookup(fs, name2);
+            if (!iNumber)
+                printf("%s not found\n", name);
+            else if (exists)
+                printf("%s already exists\n", name2);
+            //Rename it
+            else
+                renameFile(fs, name, name2, iNumber);
+
+            break;
+        case 'f':
+            //do nothing
+            mutex_unlock(&commandsLock);
+
+            break;
+        default: { /* error */
+            mutex_unlock(&commandsLock);
+
+            fprintf(stderr, "Error: commands to apply\n");
+            exit(EXIT_FAILURE);
         }
     }
 }
 
-void runThreads(FILE* timeFp){
-    TIMER_T startTime, stopTime;
-    #if defined (RWLOCK) || defined (MUTEX)
-        pthread_t writer;
-        pthread_t* workers = (pthread_t*) malloc(numberThreads * sizeof(pthread_t));
-    #endif
 
-    TIMER_READ(startTime);
 
-    #if defined (RWLOCK) || defined (MUTEX)
-        if (pthread_create(&writer, NULL, processInput, NULL) != 0){
-            perror("Can't create thread");
-            exit(EXIT_FAILURE);
-        }
-        for (int i = 0; i < numberThreads; i++) {
-            int err = pthread_create(&workers[i], NULL, applyCommands, NULL);
-            if (err != 0){
-                perror("Can't create thread");
-                exit(EXIT_FAILURE);
-            }
-        }
+int mount(char* address){
+    int dim_serv;
+    if((sockfd = socket(AF_UNIX,SOCK_STREAM,0))<0)
+        perror("Erro ao criar socket servidor");
+    
+    unlink(address);
 
-        if (pthread_join(writer, NULL))
-            perror("Can't join thread");
-        for (int i = 0; i < numberThreads; i++) {
-            if (pthread_join(workers[i], NULL))
-                perror("Can't join thread");
-        }
+    bzero((char*)&end_serv,sizeof(end_serv));
 
-    #else
-        processInput();
-        applyCommands();
-    #endif
+    end_serv.sun_family = AF_UNIX;
+    strcpy(end_serv.sun_path,address);
+    dim_serv = sizeof(end_serv.sun_family)+ strlen(end_serv.sun_path);
 
-    TIMER_READ(stopTime);
-    fprintf(timeFp, "\nTecnicoFS completed in %.4f seconds.\n",
-            TIMER_DIFF_SECONDS(startTime, stopTime));
+    if((bind(sockfd, (struct sockaddr *)&end_serv, dim_serv))<0)
+        perror("Erro no Bind Servidor");
+    
+    listen(sockfd,5);
 
-    #if defined (RWLOCK) || defined (MUTEX)
-        free(workers);
-    #endif
+}
+
+void* trata_cliente(void* sock){
+    struct threadArg* tsockfd = (struct threadArg*)sock;
+    int sockfd= tsockfd->newSockfd;
+    int len;
+    char buffer[100];
+    while(read(sockfd,buffer,100) > 0){
+        
+        printf("Mensagem recebida:%s\n",buffer);
+        applyCommands(buffer);
+        printf("terminou\n");
+        print_tecnicofs_tree(stdout, fs);
+        if((write(sockfd,"Boa Noite",10))<0)
+            perror("Erro no Write Server"); 
+    }
 }
 
 int main(int argc, char* argv[]) {
+    int novosockfd, dim_cli, dim_serv,i=0;
+    struct sockaddr_un end_cli;
+
     parseArgs(argc, argv);
     
     mutex_init(&semMut);
@@ -312,10 +312,22 @@ int main(int argc, char* argv[]) {
     FILE * outputFp = openOutputFile();
     fs = new_tecnicofs();
 
-    //initialize the first command with null command ('f')
-    inputCommands[0][0]='f';
+
+    mount(UNIXSTR_PATH);
+
+    while(1){
+        dim_cli = sizeof(end_cli);
+        connections[num_connects]= (struct threadArg*)malloc(sizeof(int)*2);
+        connections[num_connects]->newSockfd=accept(sockfd,(struct sockaddr *)&end_cli,&dim_cli);
+        connections[num_connects]->uID=0;
+        if (novosockfd<0)
+            perror("Erro ao aceitar socket cliente");
+        pthread_create(&tid[i++],NULL,trata_cliente,(void*)connections[num_connects++]);
+    }
+
     
-    runThreads(stdout);
+    close(novosockfd);
+
     print_tecnicofs_tree(outputFp, fs);
     fflush(outputFp);
     fclose(outputFp);
