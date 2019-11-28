@@ -1,9 +1,5 @@
 /* Sistemas Operativos, DEI/IST/ULisboa 2019-20 */
-/* In order to simplify the access from the threads to the commands array,
-   the commands will be inserted to the tail and removed from the head,
-   when a command is removed, all the positions are shifted to the left,
-   when the array is empty, the head has the command 'f'.
-   The head and the tail are designed by the variables head and numberCommands.*/
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,7 +18,8 @@
 
 
 struct threadArg{
-    int uID,newSockfd;
+    int newSockfd;
+    uid_t uID;
 };
 
 struct threadArg *connections[MAX_THREADS];
@@ -35,15 +32,9 @@ int sockfd,num_connects=0;
 char* global_inputFile = NULL;
 char* global_outputFile = NULL;
 int numberThreads = 0;
-int numBuckets = 0;
-pthread_mutex_t commandsLock, semMut;
-sem_t semprod, semcons;
+int numBuckets = 1;
+pthread_mutex_t commandsLock;
 tecnicofs* fs;
-
-char inputCommands[MAX_COMMANDS][MAX_INPUT_SIZE];
-int numberCommands = 0; // Tail of the commands array (first empty slot)
-int head = 0;   // Head of the commands array
-int kill = 0;   // 0 if still processing input, 1 otherwise
 
 static void displayUsage(const char* appName) {
     printf("Usage: %s input_filepath output_filepath threads_number buckets_number\n",
@@ -73,104 +64,12 @@ static void parseArgs(long argc, char* const argv[]) {
     }
 }
 
-void insertCommand(char* data) {
-    wait_sem(&semprod);
-    mutex_lock(&semMut);
-
-    strcpy(inputCommands[numberCommands++], data);
-
-    // keep numberCommands in boundarys
-    if(numberCommands==MAX_COMMANDS)numberCommands=0;
-
-    mutex_unlock(&semMut);
-    post_sem(&semcons);
-}
-
-char* removeCommand() {
-    wait_sem(&semcons);
-    mutex_lock(&semMut);
-
-    char *data = (char*) malloc(sizeof(char) * (strlen(inputCommands[0]) + 1));
-    strcpy(data, inputCommands[head]);
-
-    // keep head in boundarys
-    if(++head==MAX_COMMANDS)head=0;
-    // if there are no more commands to read, set the null command
-    if(numberCommands==head)
-        strcpy(inputCommands[head],"f");
-    
-
-    mutex_unlock(&semMut);
-    post_sem(&semprod);
-
-    return data;
-}
 
 void errorParse(int lineNumber) {
     fprintf(stderr, "Error: line %d invalid\n", lineNumber);
     exit(EXIT_FAILURE);
 }
 
-void * processInput() {
-    FILE* inputFile;
-
-    inputFile = fopen(global_inputFile, "r");
-    if (!inputFile) {
-        fprintf(stderr, "Error: Could not read %s\n", global_inputFile);
-        exit(EXIT_FAILURE);
-    }
-
-    char line[MAX_INPUT_SIZE];
-    int lineNumber = 0;
-
-    while(fgets(line, sizeof(line)/sizeof(char), inputFile)) {
-        char token;
-        char name[MAX_INPUT_SIZE];
-        char name1[MAX_INPUT_SIZE];
-        char name2[MAX_INPUT_SIZE];
-
-        lineNumber++;
-        int rTokens = 0;
-        int numTokens = sscanf(line, "%c %s", &token, name);
-
-        /* perform minimal validation */
-        if (numTokens < 1) {
-            continue;
-        }
-
-        switch (token) {
-            case 'c':
-            case 'l':
-            case 'd':
-                if (numTokens != 2)
-                    errorParse(lineNumber);
-
-                insertCommand(line);
-
-                break;
-            case 'r':
-                rTokens = sscanf(name,"%s %s",name1,name2);
-                if (numTokens + rTokens != 3)
-                    errorParse(lineNumber);
-
-                insertCommand(line);
-
-                break;
-            case '#':
-                break;
-            default: { /* error */
-                errorParse(lineNumber);
-            }
-        }
-    }
-    //Process input ended, increase the flag
-    mutex_lock(&commandsLock);
-    kill = 1;
-    mutex_unlock(&commandsLock);
-    fclose(inputFile);
-
-    return NULL;
-}
 
 FILE * openOutputFile() {
     FILE *fp;
@@ -184,30 +83,32 @@ FILE * openOutputFile() {
     return fp;
 }
 
-/*
-A thread always tries to remove the head command in the array,
-if it is the null command ('f'), it wont do nothing.*/
-void applyCommands(char* inputCommands) {
+void applyCommand(char* inputCommands,uid_t uID,int sockfd) {
     mutex_lock(&commandsLock);
-    char command[MAX_INPUT_SIZE];
+
+    char command[MAX_INPUT_SIZE],name[MAX_INPUT_SIZE],name2[MAX_INPUT_SIZE], token;
+    int iNumber,own,other;
+    permission ownerPerm,othersPerm;
+
     strcpy(command,inputCommands);
-    char token = command[0];
-    char name[MAX_INPUT_SIZE],name2[MAX_INPUT_SIZE];
-    int iNumber;
+    token = command[0];
+    
     switch (token) {
         case 'c':
-            sscanf(command, "%c %s", &token, name);
+            sscanf(command, "%c %s %d%d", &token, name,&own,&other);
             
-            iNumber = obtainNewInumber(fs);
-            
+            ownerPerm=own;
+            othersPerm=other;
+
+            iNumber = obtainNewInumber(uID,ownerPerm,othersPerm);
+            printf("%d\n",iNumber);
             mutex_unlock(&commandsLock);
 
-            create(fs, name, iNumber);
-
+            create(fs, name, iNumber,sockfd);
+            
             break;
         case 'l':
             sscanf(command, "%c %s", &token, name);
-
             mutex_unlock(&commandsLock);
 
             int searchResult = lookup(fs, name);
@@ -222,11 +123,7 @@ void applyCommands(char* inputCommands) {
 
             mutex_unlock(&commandsLock);
 
-            iNumber = lookup(fs,name);
-            if (!iNumber)
-                printf("%s not found\n", name);
-            else
-                delete(fs, name);
+            delete(fs, name,uID,sockfd);
 
             break;
         case 'r':
@@ -234,21 +131,7 @@ void applyCommands(char* inputCommands) {
             
             mutex_unlock(&commandsLock);
 
-            // Verificate if booth file names are in use                   
-            iNumber = lookup(fs, name);
-            int exists = lookup(fs, name2);
-            if (!iNumber)
-                printf("%s not found\n", name);
-            else if (exists)
-                printf("%s already exists\n", name2);
-            //Rename it
-            else
-                renameFile(fs, name, name2, iNumber);
-
-            break;
-        case 'f':
-            //do nothing
-            mutex_unlock(&commandsLock);
+            renameFile(fs, name, name2, sockfd);
 
             break;
         default: { /* error */
@@ -279,61 +162,54 @@ int mount(char* address){
         perror("Erro no Bind Servidor");
     
     listen(sockfd,5);
-
+    return 0;
 }
 
 void* trata_cliente(void* sock){
     struct threadArg* tsockfd = (struct threadArg*)sock;
     int sockfd= tsockfd->newSockfd;
-    int len;
+    uid_t uID= tsockfd->uID;
     char buffer[100];
     while(read(sockfd,buffer,100) > 0){
-        
-        printf("Mensagem recebida:%s\n",buffer);
-        applyCommands(buffer);
-        printf("terminou\n");
-        print_tecnicofs_tree(stdout, fs);
-        if((write(sockfd,"Boa Noite",10))<0)
-            perror("Erro no Write Server"); 
+        printf("%s\n",buffer);
+        applyCommand(buffer,uID,sockfd);
     }
+    return NULL;
 }
 
 int main(int argc, char* argv[]) {
-    int novosockfd, dim_cli, dim_serv,i=0;
+    struct ucred user;
+    int dim_cli,i=0,len=sizeof(struct ucred);
     struct sockaddr_un end_cli;
-
-    parseArgs(argc, argv);
     
-    mutex_init(&semMut);
-    init_sem(&semprod, MAX_COMMANDS);
-    init_sem(&semcons, 0);
-    mutex_init(&commandsLock);
+    parseArgs(argc, argv);
 
     FILE * outputFp = openOutputFile();
     fs = new_tecnicofs();
 
-
+    mutex_init(&commandsLock);
+    inode_table_init();
     mount(UNIXSTR_PATH);
 
     while(1){
         dim_cli = sizeof(end_cli);
-        connections[num_connects]= (struct threadArg*)malloc(sizeof(int)*2);
-        connections[num_connects]->newSockfd=accept(sockfd,(struct sockaddr *)&end_cli,&dim_cli);
-        connections[num_connects]->uID=0;
-        if (novosockfd<0)
+        connections[num_connects]= (struct threadArg*)malloc(sizeof(int)+sizeof(uid_t));
+        connections[num_connects]->newSockfd=accept(sockfd,(struct sockaddr *)&end_cli,(socklen_t*)&dim_cli);
+        if (connections[num_connects]->newSockfd<0)
             perror("Erro ao aceitar socket cliente");
+
+        if(getsockopt(connections[num_connects]->newSockfd,SOL_SOCKET,SO_PEERCRED,&user,(socklen_t*)&len)<0)
+            perror("Erro ao obter userID do cliente");
+        connections[num_connects]->uID=user.uid;
+
         pthread_create(&tid[i++],NULL,trata_cliente,(void*)connections[num_connects++]);
     }
 
     
-    close(novosockfd);
 
     print_tecnicofs_tree(outputFp, fs);
     fflush(outputFp);
     fclose(outputFp);
-
-    destroy_sem(&semcons);
-    destroy_sem(&semprod);
     mutex_destroy(&commandsLock);
 
     free_tecnicofs(fs);
