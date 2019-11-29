@@ -76,7 +76,7 @@ void applyCommand(char* inputCommands, uid_t uID, openedFile** filetable, int so
     mutex_lock(&commandsLock);
 
     char command[MAX_INPUT_SIZE], name[MAX_INPUT_SIZE], new_name[MAX_INPUT_SIZE], token;
-    int iNumber, own, other, mode;
+    int iNumber, own, other, mode, fd;
     permission ownerPerm, othersPerm;
 
     strcpy(command,inputCommands);
@@ -117,6 +117,12 @@ void applyCommand(char* inputCommands, uid_t uID, openedFile** filetable, int so
             mutex_unlock(&commandsLock);
 
             openFile(fs, name, (permission) mode, uID, filetable, sockfd);
+        case 'x':
+            sscanf(command,"%c %d", &token, &fd);
+
+            mutex_unlock(&commandsLock);
+
+            closeFile(fs, fd, filetable, sockfd);
         default: { /* error */
             mutex_unlock(&commandsLock);
 

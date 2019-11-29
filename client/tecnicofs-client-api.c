@@ -88,3 +88,16 @@ int tfsOpen(char *filename, permission mode) {
 
     return return_val;
 }
+
+int tfsClose(int fd) {
+    char buf[100];
+    int return_val;
+
+    snprintf(buf, 100, "x %d", fd);
+    if (write(sockfd, buf, 100) < 0)
+        return TECNICOFS_ERROR_OTHER;
+    if (read(sockfd, &return_val, sizeof(return_val)) < 0)
+        return TECNICOFS_ERROR_OTHER;
+
+    return return_val;
+}

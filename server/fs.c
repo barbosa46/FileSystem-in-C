@@ -82,8 +82,17 @@ void delete(tecnicofs* fs, char *name, uid_t uID, int sockfd) {
 		inode_get(iNumber, &owner, NULL, NULL, NULL, 0);
 
 		if(owner == uID) {
-			fs->bsts[key].bstRoot = remove_item(fs->bsts[key].bstRoot, name); /* remove from bst */
-			inode_delete(iNumber);		/* remove from inode table */
+			for (int i = 0; i < num_connects; i++) {
+				for (int j = 0; j < 5; j++) {
+					if (iNumber == opened[i][j]->iNumber) return_val = TECNICOFS_ERROR_FILE_IS_OPEN;
+				}
+			}
+
+			if (return_val != TECNICOFS_ERROR_FILE_IS_OPEN) {
+				fs->bsts[key].bstRoot = remove_item(fs->bsts[key].bstRoot, name); /* remove from bst */
+				inode_delete(iNumber);		/* remove from inode table */
+			}
+
 		} else
 			return_val = TECNICOFS_ERROR_PERMISSION_DENIED;
 	} else
@@ -117,8 +126,17 @@ void renameFile(tecnicofs* fs, char *name, char* new_name, uid_t uID, int sockfd
 		inode_get(iNumber, &owner, NULL, NULL, NULL, 0);
 
 		if(owner == uID) {
-			fs->bsts[key1].bstRoot = remove_item(fs->bsts[key1].bstRoot, name); // delete
-			fs->bsts[key2].bstRoot = insert(fs->bsts[key2].bstRoot, new_name, iNumber); // create
+			for (int i = 0; i < num_connects; i++) {
+				for (int j = 0; j < 5; j++) {
+					if (iNumber == opened[i][j]->iNumber) return_val = TECNICOFS_ERROR_FILE_IS_OPEN;
+				}
+			}
+
+			if (return_val != TECNICOFS_ERROR_FILE_IS_OPEN) {
+				fs->bsts[key1].bstRoot = remove_item(fs->bsts[key1].bstRoot, name); // delete
+				fs->bsts[key2].bstRoot = insert(fs->bsts[key2].bstRoot, new_name, iNumber); // create
+			}
+
 		} else
 			return_val = TECNICOFS_ERROR_PERMISSION_DENIED;
 	}
@@ -141,26 +159,35 @@ void openFile(tecnicofs* fs, char *name, int mode, uid_t uID, openedFile** filet
 		inode_get(iNumber, &owner, &ownerPerm, &othersPerm, NULL, 0);
 
 		(owner == uID) ? (perm = ownerPerm) : (perm = othersPerm);
-		if(perm == mode || perm == RW) {
+		if (perm == mode || perm == RW) {
 			int i = 0;
 
 			while (i < 5) {
-				if (filetable[i]) {
+				if (!filetable[i]) {
 					filetable[i]->iNumber = iNumber;
 					filetable[i]->mode = mode;
 
 					return_val = i;
+					break;
 				}
 
 				i++;
 			}
 
-			return_val = TECNICOFS_ERROR_MAXED_OPEN_FILES;
+			if (i == 5) return_val = TECNICOFS_ERROR_MAXED_OPEN_FILES;
 
 		} else
 			return_val = TECNICOFS_ERROR_PERMISSION_DENIED;
 	} else
 		return_val = TECNICOFS_ERROR_FILE_NOT_FOUND;
+
+	write(sockfd, &return_val, sizeof(return_val));
+}
+
+void closeFile(tecnicofs* fs, int fd, openedFile** filetable, int sockfd) {
+	int return_val = 0;
+
+	(filetable[fd]) ? free(filetable[fd]) : (return_val = TECNICOFS_ERROR_FILE_NOT_OPEN);
 
 	write(sockfd, &return_val, sizeof(return_val));
 }

@@ -28,7 +28,7 @@ typedef struct openedFile {
 
 openedFile *opened[MAX_CLIENTS][5];
 
-extern int numBuckets;
+extern int numBuckets, num_connects;
 
 int obtainNewInumber(uid_t owner, permission ownerPerm, permission othersPerm);
 tecnicofs* new_tecnicofs();
@@ -37,6 +37,7 @@ void create(tecnicofs* fs, char *name, int inumber, int sockfd);
 void delete(tecnicofs* fs, char *name, uid_t uID, int sockfd);
 void renameFile(tecnicofs* fs, char *name, char* new_name, uid_t uID, int sockfd);
 void openFile(tecnicofs* fs, char *name, int mode, uid_t uID, openedFile** filetable, int sockfd);
+void closeFile(tecnicofs* fs, int fd, openedFile** filetable, int sockfd);
 int lookup(tecnicofs* fs, char *name);
 void print_tecnicofs_tree(FILE * fp, tecnicofs *fs);
 
