@@ -39,51 +39,52 @@ int tfsUnmount() {
 
 int tfsCreate(char *filename, permission ownerPermissions, permission othersPermissions) {
     char buf[100];
+    int return_val;
 
     snprintf(buf, 100, "c %s %d%d", filename, ownerPermissions, othersPermissions);
     if (write(sockfd, buf, 100) < 0)
         return TECNICOFS_ERROR_OTHER;
-    if (read(sockfd, buf, 100) < 0)
+    if (read(sockfd, &return_val, sizeof(return_val)) < 0)
         return TECNICOFS_ERROR_OTHER;
 
-    if (strcmp(buf, "FILE ALREADY EXISTS") == 0)
-        return TECNICOFS_ERROR_FILE_ALREADY_EXISTS;
-
-    return 0;
+    return return_val;
 }
 
 int tfsDelete(char *filename) {
     char buf[100];
+    int return_val;
 
     snprintf(buf, 100, "c %s", filename);
     if (write(sockfd, buf, 100) < 0)
         return TECNICOFS_ERROR_OTHER;
-    if (read(sockfd, buf, 100) < 0)
+    if (read(sockfd, &return_val, sizeof(return_val)) < 0)
         return TECNICOFS_ERROR_OTHER;
 
-    if (strcmp(buf, "PERMISSION DENIED") == 0)
-        return TECNICOFS_ERROR_PERMISSION_DENIED;
-    if (strcmp(buf, "FILE NOT FOUND") == 0)
-        return TECNICOFS_ERROR_FILE_NOT_FOUND;
-
-    return 0;
+    return return_val;
 }
 
 int tfsRename(char *filenameOld, char *filenameNew) {
     char buf[100];
+    int return_val;
 
     snprintf(buf, 100, "c %s %s", filenameOld, filenameNew);
     if (write(sockfd, buf, 100) < 0)
         return TECNICOFS_ERROR_OTHER;
-    if (read(sockfd, buf, 100) < 0)
+    if (read(sockfd, &return_val, sizeof(return_val)) < 0)
         return TECNICOFS_ERROR_OTHER;
 
-    if (strcmp(buf, "PERMISSION DENIED") == 0)
-        return TECNICOFS_ERROR_PERMISSION_DENIED;
-    if (strcmp(buf, "OLD FILE NOT FOUND") == 0)
-        return TECNICOFS_ERROR_FILE_NOT_FOUND;
-    if (strcmp(buf, "NEW FILE ALREADY EXISTS") == 0)
-        return TECNICOFS_ERROR_FILE_ALREADY_EXISTS;
+    return return_val;
+}
 
-    return 0;
+int tfsOpen(char *filename, permission mode) {
+    char buf[100];
+    int return_val;
+
+    snprintf(buf, 100, "o %s %d", filename, mode);
+    if (write(sockfd, buf, 100) < 0)
+        return TECNICOFS_ERROR_OTHER;
+    if (read(sockfd, &return_val, sizeof(return_val)) < 0)
+        return TECNICOFS_ERROR_OTHER;
+
+    return return_val;
 }
