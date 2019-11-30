@@ -17,11 +17,6 @@
 #define UNIXSTR_PATH "/tmp/socket.unix.stream"
 
 
-struct threadArg {
-    int newSockfd;
-    uid_t uID;
-};
-
 struct threadArg *connections[MAX_CLIENTS];
 struct sockaddr_un end_serv;
 
@@ -172,14 +167,15 @@ void* handle_client(void* sock) {
 
     struct threadArg* tsockfd = (struct threadArg*) sock;
     int sockfd = tsockfd->newSockfd;
+    int index = tsockfd->index;
     uid_t uID = tsockfd->uID;
 
-    openedFile **client_opened = init_client_filetable(num_connects - 1);
+    openedFile **client_opened = init_client_filetable(index);
 
     while (read(sockfd, buffer, 100) > 0)
         applyCommand(buffer, uID, client_opened, sockfd);
 
-    destroy_client_filetable(num_connects - 1);
+    destroy_client_filetable(index);
 
     return NULL;
 }
@@ -196,7 +192,7 @@ int main(int argc, char* argv[]) {
     inode_table_init();
 
     mutex_init(&commandsLock);
-
+    sync_init(&tableLock);
     mount(socket_name);
 
     while (1) {
@@ -209,7 +205,7 @@ int main(int argc, char* argv[]) {
         if(getsockopt(connections[num_connects]->newSockfd, SOL_SOCKET, SO_PEERCRED, &user, (socklen_t*)&len) < 0)
             perror("Error obtaining client id");
         connections[num_connects]->uID = user.uid;
-
+        connections[num_connects]->index=num_connects;
         pthread_create(&tid[i++], NULL, handle_client, (void*)connections[num_connects++]);
     }
 

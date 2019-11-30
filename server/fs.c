@@ -82,6 +82,7 @@ void delete(tecnicofs* fs, char *name, uid_t uID, int sockfd) {
 		inode_get(iNumber, &owner, NULL, NULL, NULL, 0);
 
 		if(owner == uID) {
+			sync_rdlock(&tableLock);
 			for (int i = 0; i < num_connects; i++) {
 				for (int j = 0; j < 5; j++) {
 					if (iNumber == opened[i][j]->iNumber) return_val = TECNICOFS_ERROR_FILE_IS_OPEN;
@@ -92,7 +93,7 @@ void delete(tecnicofs* fs, char *name, uid_t uID, int sockfd) {
 				fs->bsts[key].bstRoot = remove_item(fs->bsts[key].bstRoot, name); /* remove from bst */
 				inode_delete(iNumber);		/* remove from inode table */
 			}
-
+			sync_unlock(&tableLock);
 		} else
 			return_val = TECNICOFS_ERROR_PERMISSION_DENIED;
 	} else
@@ -108,7 +109,7 @@ void renameFile(tecnicofs* fs, char *name, char* new_name, uid_t uID, int sockfd
 	int key2 = hash(new_name, numBuckets);
 	int iNumber, return_val = 0;
 	uid_t owner;
-
+	
 	/* force to always lock the tree with lower key first */
 	if (key1 > key2) { int temp = key1; key1 = key2; key2 = temp; }
 
@@ -122,10 +123,10 @@ void renameFile(tecnicofs* fs, char *name, char* new_name, uid_t uID, int sockfd
 		return_val = TECNICOFS_ERROR_FILE_ALREADY_EXISTS;
 	else {
 		iNumber = searchNode->inumber;
-
 		inode_get(iNumber, &owner, NULL, NULL, NULL, 0);
 
 		if(owner == uID) {
+			sync_rdlock(&tableLock)
 			for (int i = 0; i < num_connects; i++) {
 				for (int j = 0; j < 5; j++) {
 					if (iNumber == opened[i][j]->iNumber) return_val = TECNICOFS_ERROR_FILE_IS_OPEN;
@@ -136,7 +137,7 @@ void renameFile(tecnicofs* fs, char *name, char* new_name, uid_t uID, int sockfd
 				fs->bsts[key1].bstRoot = remove_item(fs->bsts[key1].bstRoot, name); // delete
 				fs->bsts[key2].bstRoot = insert(fs->bsts[key2].bstRoot, new_name, iNumber); // create
 			}
-
+			sync_unlock(&tableLock);
 		} else
 			return_val = TECNICOFS_ERROR_PERMISSION_DENIED;
 	}
@@ -161,7 +162,7 @@ void openFile(tecnicofs* fs, char *name, int mode, uid_t uID, openedFile** filet
 		(owner == uID) ? (perm = ownerPerm) : (perm = othersPerm);
 		if (perm == mode || perm == RW) {
 			int i = 0;
-
+			sync_wrlock(&tableLock);
 			while (i < 5) {
 				if (!filetable[i]) {
 					filetable[i]->iNumber = iNumber;
@@ -173,7 +174,7 @@ void openFile(tecnicofs* fs, char *name, int mode, uid_t uID, openedFile** filet
 
 				i++;
 			}
-
+			sync_unlock(&tableLock);
 			if (i == 5) return_val = TECNICOFS_ERROR_MAXED_OPEN_FILES;
 
 		} else
@@ -183,12 +184,11 @@ void openFile(tecnicofs* fs, char *name, int mode, uid_t uID, openedFile** filet
 
 	write(sockfd, &return_val, sizeof(return_val));
 }
-
 void closeFile(tecnicofs* fs, int fd, openedFile** filetable, int sockfd) {
 	int return_val = 0;
-
+	sync_wrlock(&tableLock);
 	(filetable[fd]) ? free(filetable[fd]) : (return_val = TECNICOFS_ERROR_FILE_NOT_OPEN);
-
+	sync_unlock(&tableLock);
 	write(sockfd, &return_val, sizeof(return_val));
 }
 

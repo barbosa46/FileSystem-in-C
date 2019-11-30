@@ -26,7 +26,14 @@ typedef struct openedFile {
     permission mode;
 } openedFile;
 
+struct threadArg {
+    int newSockfd;
+    int index;
+    uid_t uID;
+};
+
 openedFile *opened[MAX_CLIENTS][5];
+syncMech tableLock;
 
 extern int numBuckets, num_connects;
 
