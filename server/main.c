@@ -9,6 +9,7 @@
 #include <sys/un.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <signal.h>
 #include "fs.h"
 #include "constants.h"
 #include "lib/timer.h"
@@ -32,7 +33,7 @@ int numBuckets = 1;
 pthread_mutex_t commandsLock;
 
 tecnicofs* fs;
-
+FILE * outputFp;
 static void displayUsage(const char* appName) {
     printf("Usage: %s input_filepath output_filepath threads_number buckets_number\n",
             appName);
@@ -71,7 +72,7 @@ void applyCommand(char* inputCommands, uid_t uID, openedFile** filetable, int so
     mutex_lock(&commandsLock);
 
     char command[MAX_INPUT_SIZE], name[MAX_INPUT_SIZE], new_name[MAX_INPUT_SIZE], token;
-    int iNumber, own, other, mode, fd;
+    int own, other, mode, fd;
     permission ownerPerm, othersPerm;
 
     strcpy(command,inputCommands);
@@ -84,10 +85,9 @@ void applyCommand(char* inputCommands, uid_t uID, openedFile** filetable, int so
             ownerPerm = own;
             othersPerm = other;
 
-            iNumber = obtainNewInumber(uID, ownerPerm, othersPerm);
             mutex_unlock(&commandsLock);
 
-            create(fs, name, iNumber,sockfd);
+            create(fs, name, uID, sockfd,ownerPerm,othersPerm);
 
             break;
         case 'd':
@@ -95,7 +95,7 @@ void applyCommand(char* inputCommands, uid_t uID, openedFile** filetable, int so
 
             mutex_unlock(&commandsLock);
 
-            delete(fs, name, uID, sockfd);
+            deleteFile(fs, name, uID, sockfd);
 
             break;
         case 'r':
@@ -179,15 +179,33 @@ void* handle_client(void* sock) {
 
     return NULL;
 }
+void kill_handler(int sig_num){
+    signal(SIGINT, kill_handler);
+    for(int i=0; i<num_connects;++i){
+        pthread_join(tid[i],NULL);
+        free(connections[i]);
+    }
+    print_tecnicofs_tree(outputFp, fs);
+    fflush(outputFp);
+    fclose(outputFp);
+    mutex_destroy(&commandsLock);
 
+    inode_table_destroy();
+    free_tecnicofs(fs);
+
+    exit(EXIT_SUCCESS);
+
+}
 int main(int argc, char* argv[]) {
     struct ucred user;
     int dim_cli, i = 0, len = sizeof(struct ucred);
     struct sockaddr_un end_cli;
 
+    signal(SIGINT, kill_handler);
+
     parseArgs(argc, argv);
 
-    FILE * outputFp = openOutputFile();
+    outputFp = openOutputFile();
     fs = new_tecnicofs();
     inode_table_init();
 
@@ -209,13 +227,4 @@ int main(int argc, char* argv[]) {
         pthread_create(&tid[i++], NULL, handle_client, (void*)connections[num_connects++]);
     }
 
-    print_tecnicofs_tree(outputFp, fs);
-    fflush(outputFp);
-    fclose(outputFp);
-    mutex_destroy(&commandsLock);
-
-    inode_table_destroy();
-    free_tecnicofs(fs);
-
-    exit(EXIT_SUCCESS);
 }

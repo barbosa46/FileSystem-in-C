@@ -25,7 +25,7 @@ typedef enum permission { NONE, WRITE, READ, RW } permission;
 #define TECNICOFS_ERROR_FILE_NOT_OPEN -8
 /* File is open */
 #define TECNICOFS_ERROR_FILE_IS_OPEN -9
-/* File is open in the a mode that allows the operation */
+/* File isn't open in the mode that allows the operation */
 #define TECNICOFS_ERROR_INVALID_MODE -10
 /* Generic error */
 #define TECNICOFS_ERROR_OTHER -11

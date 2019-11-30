@@ -67,7 +67,7 @@ fs-rwlock.o: fs.c fs.h lib/bst.h lib/inodes.h
 sync-rwlock.o: CFLAGS+=-DRWLOCK
 sync-rwlock.o: sync.c sync.h constants.h
 
-main-rwlock.o: CFLAGS+=-DRWLOCK
+main-rwlock.o: CFLAGS+=-DRWLOCK 
 main-rwlock.o: main.c fs.h lib/bst.h lib/hash.h constants.h lib/timer.h sync.h
 tecnicofs-rwlock: lib/bst-rwlock.o lib/hash-rwlock.o lib/inodes-rwlock.o fs-rwlock.o sync-rwlock.o main-rwlock.o
 
