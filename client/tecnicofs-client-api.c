@@ -54,7 +54,7 @@ int tfsDelete(char *filename) {
     char buf[100];
     int return_val;
 
-    snprintf(buf, 100, "c %s", filename);
+    snprintf(buf, 100, "d %s", filename);
     if (write(sockfd, buf, 100) < 0)
         return TECNICOFS_ERROR_OTHER;
     if (read(sockfd, &return_val, sizeof(return_val)) < 0)
@@ -67,7 +67,7 @@ int tfsRename(char *filenameOld, char *filenameNew) {
     char buf[100];
     int return_val;
 
-    snprintf(buf, 100, "c %s %s", filenameOld, filenameNew);
+    snprintf(buf, 100, "r %s %s", filenameOld, filenameNew);
     if (write(sockfd, buf, 100) < 0)
         return TECNICOFS_ERROR_OTHER;
     if (read(sockfd, &return_val, sizeof(return_val)) < 0)
@@ -94,6 +94,39 @@ int tfsClose(int fd) {
     int return_val;
 
     snprintf(buf, 100, "x %d", fd);
+    if (write(sockfd, buf, 100) < 0)
+        return TECNICOFS_ERROR_OTHER;
+    if (read(sockfd, &return_val, sizeof(return_val)) < 0)
+        return TECNICOFS_ERROR_OTHER;
+
+    return return_val;
+}
+
+int tfsRead(int fd, char *buffer, int len) {
+    char buf[100];
+    int return_val;
+
+    snprintf(buf, 100, "l %d %d", fd, len);
+    if (write(sockfd, buf, 100) < 0)
+        return TECNICOFS_ERROR_OTHER;
+    if (read(sockfd, &return_val, sizeof(return_val)) < 0)
+        return TECNICOFS_ERROR_OTHER;
+    if (return_val > 0 && read(sockfd, buffer, len) < 0)
+        return TECNICOFS_ERROR_OTHER;
+
+    if (len > strlen(buffer)) len = strlen(buffer);
+    buffer[len - 1] = '\0';
+
+    return return_val;
+}
+
+int tfsWrite(int fd, char *buffer, int len) {
+    char buf[100];
+    int return_val;
+
+    if (strlen(buffer) > len) buffer[len] = '\0';
+
+    snprintf(buf, 100, "w %d %s", fd, buffer);
     if (write(sockfd, buf, 100) < 0)
         return TECNICOFS_ERROR_OTHER;
     if (read(sockfd, &return_val, sizeof(return_val)) < 0)

@@ -15,13 +15,12 @@
 #include "lib/timer.h"
 #include "sync.h"
 
-#define UNIXSTR_PATH "/tmp/socket.unix.stream"
-
-
 struct threadArg *connections[MAX_CLIENTS];
 struct sockaddr_un end_serv;
 
 pthread_t tid[MAX_CLIENTS];
+
+TIMER_T startTime, stopTime;
 
 int sockfd, num_connects = 0;
 int numberThreads = 0;
@@ -71,8 +70,8 @@ FILE * openOutputFile() {
 void applyCommand(char* inputCommands, uid_t uID, openedFile** filetable, int sockfd) {
     mutex_lock(&commandsLock);
 
-    char command[MAX_INPUT_SIZE], name[MAX_INPUT_SIZE], new_name[MAX_INPUT_SIZE], token;
-    int own, other, mode, fd;
+    char command[MAX_INPUT_SIZE], name[MAX_INPUT_SIZE], new_name[MAX_INPUT_SIZE], dataInBuffer[MAX_INPUT_SIZE], token;
+    int own, other, mode, fd, len;
     permission ownerPerm, othersPerm;
 
     strcpy(command,inputCommands);
@@ -80,7 +79,7 @@ void applyCommand(char* inputCommands, uid_t uID, openedFile** filetable, int so
 
     switch (token) {
         case 'c':
-            sscanf(command, "%c %s %d%d", &token, name, &own, &other);
+            sscanf(command, "%c %s %1d%1d", &token, name, &own, &other);
 
             ownerPerm = own;
             othersPerm = other;
@@ -112,12 +111,32 @@ void applyCommand(char* inputCommands, uid_t uID, openedFile** filetable, int so
             mutex_unlock(&commandsLock);
 
             openFile(fs, name, (permission) mode, uID, filetable, sockfd);
+
+            break;
         case 'x':
             sscanf(command,"%c %d", &token, &fd);
 
             mutex_unlock(&commandsLock);
 
             closeFile(fs, fd, filetable, sockfd);
+
+            break;
+        case 'l':
+            sscanf(command,"%c %d %d", &token, &fd, &len);
+
+            mutex_unlock(&commandsLock);
+
+            readFile(fs, fd, uID, filetable, len, sockfd);
+
+            break;
+        case 'w':
+            sscanf(command,"%c %d %s", &token, &fd, dataInBuffer);
+
+            mutex_unlock(&commandsLock);
+
+            writeFile(fs, fd, uID, filetable, dataInBuffer, sockfd);
+
+            break;
         default: { /* error */
             mutex_unlock(&commandsLock);
 
@@ -179,12 +198,19 @@ void* handle_client(void* sock) {
 
     return NULL;
 }
-void kill_handler(int sig_num){
+
+void kill_handler(int sig_num) {
     signal(SIGINT, kill_handler);
-    for(int i=0; i<num_connects;++i){
+
+    for(int i = 0; i < num_connects; ++i) {
         pthread_join(tid[i],NULL);
         free(connections[i]);
     }
+
+    TIMER_READ(stopTime);
+    fprintf(stdout, "\nTecnicoFS completed in %.4f seconds.\n",
+            TIMER_DIFF_SECONDS(startTime, stopTime));
+
     print_tecnicofs_tree(outputFp, fs);
     fflush(outputFp);
     fclose(outputFp);
@@ -194,8 +220,8 @@ void kill_handler(int sig_num){
     free_tecnicofs(fs);
 
     exit(EXIT_SUCCESS);
-
 }
+
 int main(int argc, char* argv[]) {
     struct ucred user;
     int dim_cli, i = 0, len = sizeof(struct ucred);
@@ -210,8 +236,9 @@ int main(int argc, char* argv[]) {
     inode_table_init();
 
     mutex_init(&commandsLock);
-    sync_init(&tableLock);
     mount(socket_name);
+
+    TIMER_READ(startTime);
 
     while (1) {
         dim_cli = sizeof(end_cli);
@@ -222,9 +249,10 @@ int main(int argc, char* argv[]) {
 
         if(getsockopt(connections[num_connects]->newSockfd, SOL_SOCKET, SO_PEERCRED, &user, (socklen_t*)&len) < 0)
             perror("Error obtaining client id");
+
         connections[num_connects]->uID = user.uid;
-        connections[num_connects]->index=num_connects;
+        connections[num_connects]->index = num_connects;
+
         pthread_create(&tid[i++], NULL, handle_client, (void*)connections[num_connects++]);
     }
-
 }
