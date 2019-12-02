@@ -53,12 +53,14 @@ void free_tecnicofs(tecnicofs* fs) {
 
 /*
  * Since the inumber is no longer "the number of files added before" but the index of
- * the first free slot on the inode table and the function that gives the its value already allocates the inode,
- * we are forced to obtain the inumber while we have the lock of the bst.
+ * the first free slot on the inode table and the function that gives the its value
+ * already allocates the inode, we are forced to obtain the inumber while we have the
+ * lock of the bst.
  */
 void create(tecnicofs* fs, char *name, uid_t uID, int sockfd,permission owner, permission others) {
 	int key = hash(name, numBuckets), return_val = 0;
 	int inumber;
+
 	sync_wrlock(&(fs->bsts[key].bstLock));
 
 	if (search(fs->bsts[key].bstRoot, name))
@@ -68,7 +70,8 @@ void create(tecnicofs* fs, char *name, uid_t uID, int sockfd,permission owner, p
 		fs->bsts[key].bstRoot = insert(fs->bsts[key].bstRoot, name, inumber);
 	}
 
-	write(sockfd, &return_val, sizeof(return_val));
+	if(write(sockfd, &return_val, sizeof(return_val)) < 1)
+		perror("Error writing to socket");
 
 	sync_unlock(&(fs->bsts[key].bstLock));
 }
@@ -84,6 +87,7 @@ void deleteFile(tecnicofs* fs, char *name, uid_t uID, int sockfd) {
 
 		inode_get(iNumber, &owner, NULL, NULL, NULL, 0);
 
+		/* cycles through active clients' filetables */
 		if(owner == uID) {
 			for (int i = 0; i < num_connects; i++) {
 				for (int j = 0; j < 5; j++) {
@@ -101,7 +105,8 @@ void deleteFile(tecnicofs* fs, char *name, uid_t uID, int sockfd) {
 	} else
 		return_val = TECNICOFS_ERROR_FILE_NOT_FOUND;
 
-	write(sockfd, &return_val, sizeof(return_val));
+	if(write(sockfd, &return_val, sizeof(return_val)) < 1)
+		perror("Error writing to socket");
 
 	sync_unlock(&(fs->bsts[key].bstLock));
 }
@@ -127,6 +132,7 @@ void renameFile(tecnicofs* fs, char *name, char* new_name, uid_t uID, int sockfd
 		iNumber = searchNode->inumber;
 		inode_get(iNumber, &owner, NULL, NULL, NULL, 0);
 
+		/* cycles through active clients' filetables */
 		if(owner == uID) {
 			for (int i = 0; i < num_connects; i++) {
 				for (int j = 0; j < 5; j++) {
@@ -143,7 +149,8 @@ void renameFile(tecnicofs* fs, char *name, char* new_name, uid_t uID, int sockfd
 			return_val = TECNICOFS_ERROR_PERMISSION_DENIED;
 	}
 
-	write(sockfd, &return_val, sizeof(return_val));
+	if(write(sockfd, &return_val, sizeof(return_val)) < 1)
+		perror("Error writing to socket");
 
 	sync_unlock(&(fs->bsts[key1].bstLock));
 	if(key1 != key2) sync_unlock(&(fs->bsts[key2].bstLock));
@@ -161,11 +168,14 @@ void openFile(tecnicofs* fs, char *name, int mode, uid_t uID, openedFile** filet
 		iNumber = searchNode->inumber;
 
 		inode_get(iNumber, &owner, &ownerPerm, &othersPerm, NULL, 0);
+
+		/* sets permissions acording to client */
 		(owner == uID) ? (perm = ownerPerm) : (perm = othersPerm);
 
 		if (perm == mode || perm == RW) {
 			int i = 0;
 			while (i < 5) {
+				/* opens file in the first empty position of the client filetable */
 				if (!filetable[i]) {
 					openedFile *file = (openedFile *) malloc(sizeof(openedFile));
 
@@ -182,9 +192,10 @@ void openFile(tecnicofs* fs, char *name, int mode, uid_t uID, openedFile** filet
 		} else return_val = TECNICOFS_ERROR_PERMISSION_DENIED;
 	} else return_val = TECNICOFS_ERROR_FILE_NOT_FOUND;
 
-	sync_unlock(&(fs->bsts[key].bstLock));
+	if(write(sockfd, &return_val, sizeof(return_val)) < 1)
+		perror("Error writing to socket");
 
-	write(sockfd, &return_val, sizeof(return_val));
+	sync_unlock(&(fs->bsts[key].bstLock));
 }
 
 void closeFile(tecnicofs* fs, int fd, openedFile** filetable, int sockfd) {
@@ -196,7 +207,8 @@ void closeFile(tecnicofs* fs, int fd, openedFile** filetable, int sockfd) {
 	} else
 		return_val = TECNICOFS_ERROR_FILE_NOT_OPEN;
 
-	write(sockfd, &return_val, sizeof(return_val));
+	if(write(sockfd, &return_val, sizeof(return_val)) < 1)
+		perror("Error writing to socket");
 }
 
 void readFile(tecnicofs* fs, int fd, uid_t uID,openedFile** filetable, int len, int sockfd) {
@@ -208,6 +220,7 @@ void readFile(tecnicofs* fs, int fd, uid_t uID,openedFile** filetable, int len, 
 	if (!filetable[fd])
 		return_val = TECNICOFS_ERROR_FILE_NOT_OPEN;
 
+	/* reads from file if opened in read/read-write mode */
 	else if (filetable[fd]->mode == READ || filetable[fd]->mode == RW) {
 		iNumber = filetable[fd]->iNumber;
 		key = filetable[fd]->key;
@@ -221,11 +234,16 @@ void readFile(tecnicofs* fs, int fd, uid_t uID,openedFile** filetable, int len, 
 		else return_val = TECNICOFS_ERROR_PERMISSION_DENIED;
 
 		sync_unlock(&fs->bsts[key].bstLock);
+
 	} else
 		return_val = TECNICOFS_ERROR_INVALID_MODE;
 
-	write(sockfd, &return_val, sizeof(return_val));
-	if (return_val > 0) write(sockfd, buffer, len);
+	if (write(sockfd, &return_val, sizeof(return_val)) < 1)
+		perror("Error writing to socket");
+	if (return_val > 0) {
+		if(write(sockfd, buffer, len) < 1)
+			perror("Error writing to socket");
+	}
 }
 
 void writeFile(tecnicofs* fs, int fd, uid_t uID, openedFile** filetable, char* buffer, int sockfd){
@@ -236,6 +254,7 @@ void writeFile(tecnicofs* fs, int fd, uid_t uID, openedFile** filetable, char* b
 	if (!filetable[fd])
 		return_val = TECNICOFS_ERROR_FILE_NOT_OPEN;
 
+	/* reads from file if opened in write/read-write mode */
 	else if (filetable[fd]->mode == WRITE || filetable[fd]->mode == RW) {
 		iNumber = filetable[fd]->iNumber;
 		key = filetable[fd]->key;
@@ -255,7 +274,8 @@ void writeFile(tecnicofs* fs, int fd, uid_t uID, openedFile** filetable, char* b
 	} else
 		return_val = TECNICOFS_ERROR_INVALID_MODE;
 
-	write(sockfd, &return_val, sizeof(return_val));
+	if(write(sockfd, &return_val, sizeof(return_val)) < 1)
+		perror("Error writing to socket");
 }
 
 int lookup(tecnicofs* fs, char *name) {

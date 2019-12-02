@@ -29,7 +29,7 @@ char* global_outputFile = NULL;
 int numBuckets = 1;
 
 
-int sigInt=-1;
+int sigInt = -1;
 sigset_t set;
 struct sigaction sa;
 
@@ -37,7 +37,7 @@ pthread_mutex_t commandsLock;
 
 tecnicofs* fs;
 static void displayUsage(const char* appName) {
-    printf("Usage: %s input_filepath socket_path buckets_number\n",
+    printf("Usage: %s socket_path output_filepath buckets_number\n",
             appName);
     exit(EXIT_FAILURE);
 }
@@ -151,6 +151,7 @@ void applyCommand(char* inputCommands, uid_t uID, openedFile** filetable, int so
 openedFile** init_client_filetable(int index) {
     int i;
 
+    /* inits client filetable in global opened array */
     for (i = 0; i < 5; i++) opened[index][i] = NULL;
 
     return opened[index];
@@ -164,7 +165,8 @@ void destroy_client_filetable(int index) {
 
 int mount(char* address){
     int dim_serv;
-    if((sockfd = socket(AF_UNIX,SOCK_STREAM, 0)) <0)
+
+    if((sockfd = socket(AF_UNIX,SOCK_STREAM, 0)) < 0)
         perror("Error creating server socket");
 
     unlink(address);
@@ -184,11 +186,12 @@ int mount(char* address){
 }
 
 void* handle_client(void* sock) {
-    if(pthread_sigmask(SIG_BLOCK, &set, NULL)!=0)
+    if(pthread_sigmask(SIG_BLOCK, &set, NULL) != 0)
         perror("Couldn't create sigmask");
 
     char buffer[100];
 
+    /* extracts socket and client data */
     struct threadArg* tsockfd = (struct threadArg*) sock;
     int sockfd = tsockfd->newSockfd;
     int index = tsockfd->index;
@@ -205,8 +208,7 @@ void* handle_client(void* sock) {
 }
 
 void kill_handler() {
-
-    sigInt=1;
+    sigInt = 1;     /* simply sets the sigInt flag if a ctrl-c is detected */
 }
 
 int main(int argc, char* argv[]) {
@@ -214,10 +216,11 @@ int main(int argc, char* argv[]) {
     struct ucred user;
     struct sockaddr_un end_cli;
     FILE * outputFp;
+
     sa.sa_handler = kill_handler;
     sa.sa_flags = 0;
     sigemptyset(&sa.sa_mask);
-    
+
     sigaction(SIGINT, &sa, NULL);
     parseArgs(argc, argv);
 
@@ -229,23 +232,25 @@ int main(int argc, char* argv[]) {
     mount(socket_name);
 
     TIMER_READ(startTime);
-    
+
     sigemptyset(&set);
     sigaddset(&set, SIGINT);
-    
-    while (sigInt==-1) {
+
+    /* waits for client input */
+    while (sigInt == -1) {
         dim_cli = sizeof(end_cli);
         connections[num_connects] = (struct threadArg*) malloc(sizeof(int) + sizeof(uid_t));
-        if(connections[num_connects]==NULL)
+        if(connections[num_connects] == NULL)
             perror("Error alocating memory");
+
         connections[num_connects]->newSockfd = accept(sockfd, (struct sockaddr *)&end_cli, (socklen_t*)&dim_cli);
-        if(sigInt==-1){
+        if(sigInt == -1) {
             if (connections[num_connects]->newSockfd < 0)
                 perror("Error accepting client connection");
-            
+
             if(getsockopt(connections[num_connects]->newSockfd, SOL_SOCKET, SO_PEERCRED, &user, (socklen_t*)&len) < 0)
                 perror("Error obtaining client id");
-            
+
             connections[num_connects]->uID = user.uid;
             connections[num_connects]->index = num_connects;
 
@@ -253,11 +258,13 @@ int main(int argc, char* argv[]) {
                 perror("Error creating client_handler thread");
         }
     }
-    for(int i = 0; i < num_connects; ++i) {
-        if(pthread_join(tid[i],NULL)!=0)
+
+    for (int i = 0; i < num_connects; ++i) {
+        if(pthread_join(tid[i],NULL) != 0)
             perror("Error joining client_handler threads");
         free(connections[i]);
     }
+
     TIMER_READ(stopTime);
 
     fprintf(stdout, "\nTecnicoFS completed in %.4f seconds.\n",

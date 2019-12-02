@@ -25,7 +25,7 @@ typedef struct openedFile {
     int key;
     int iNumber;
     permission mode;
-} openedFile;
+} openedFile;       /* filetable entry; contains file and client info */
 
 struct threadArg {
     int newSockfd;
