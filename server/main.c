@@ -24,17 +24,19 @@ TIMER_T startTime, stopTime;
 
 int sockfd, num_connects = 0;
 int numberThreads = 0;
-
+int sigInt=-1;
 char* socket_name = NULL;
 char* global_outputFile = NULL;
 int numBuckets = 1;
 
+sigset_t set;
+struct sigaction sa;
+
 pthread_mutex_t commandsLock;
 
 tecnicofs* fs;
-FILE * outputFp;
 static void displayUsage(const char* appName) {
-    printf("Usage: %s input_filepath output_filepath threads_number buckets_number\n",
+    printf("Usage: %s input_filepath socket_path buckets_number\n",
             appName);
     exit(EXIT_FAILURE);
 }
@@ -87,7 +89,6 @@ void applyCommand(char* inputCommands, uid_t uID, openedFile** filetable, int so
             mutex_unlock(&commandsLock);
 
             create(fs, name, uID, sockfd,ownerPerm,othersPerm);
-
             break;
         case 'd':
             sscanf(command, "%c %s", &token, name);
@@ -182,6 +183,9 @@ int mount(char* address){
 }
 
 void* handle_client(void* sock) {
+    if(pthread_sigmask(SIG_BLOCK, &set, NULL)!=0)
+        perror("Couldn't create sigmask");
+
     char buffer[100];
 
     struct threadArg* tsockfd = (struct threadArg*) sock;
@@ -199,14 +203,56 @@ void* handle_client(void* sock) {
     return NULL;
 }
 
-void kill_handler(int sig_num) {
-    signal(SIGINT, kill_handler);
+void kill_handler() {
+    sigInt=1;
+}
 
-    for(int i = 0; i < num_connects; ++i) {
+int main(int argc, char* argv[]) {
+    int dim_cli, i = 0, len = sizeof(struct ucred);
+    struct ucred user;
+    struct sockaddr_un end_cli;
+    FILE * outputFp;
+    sa.sa_handler = kill_handler;
+    sa.sa_flags = 0;
+    sigemptyset(&sa.sa_mask);
+    
+    sigaction(SIGINT, &sa, NULL);
+    
+    parseArgs(argc, argv);
+
+    outputFp = openOutputFile();
+    fs = new_tecnicofs();
+    inode_table_init();
+
+    mutex_init(&commandsLock);
+    mount(socket_name);
+
+    TIMER_READ(startTime);
+    
+    sigemptyset(&set);
+    sigaddset(&set, SIGINT);
+    
+    while (sigInt==-1) {
+        dim_cli = sizeof(end_cli);
+        connections[num_connects] = (struct threadArg*) malloc(sizeof(int) + sizeof(uid_t));
+        connections[num_connects]->newSockfd = accept(sockfd, (struct sockaddr *)&end_cli, (socklen_t*)&dim_cli);
+        if (connections[num_connects]->newSockfd < 0 && sigInt==-1){
+            perror("Error accepting client connection");
+        }
+        else if(getsockopt(connections[num_connects]->newSockfd, SOL_SOCKET, SO_PEERCRED, &user, (socklen_t*)&len) < 0 && sigInt==-1){
+            perror("Error obtaining client id");
+        }
+        else{
+            connections[num_connects]->uID = user.uid;
+            connections[num_connects]->index = num_connects;
+
+            pthread_create(&tid[i++], NULL, handle_client, (void*)connections[num_connects++]);
+        }
+    }
+        for(int i = 0; i < num_connects; ++i) {
         pthread_join(tid[i],NULL);
         free(connections[i]);
     }
-
     TIMER_READ(stopTime);
     fprintf(stdout, "\nTecnicoFS completed in %.4f seconds.\n",
             TIMER_DIFF_SECONDS(startTime, stopTime));
@@ -220,39 +266,5 @@ void kill_handler(int sig_num) {
     free_tecnicofs(fs);
 
     exit(EXIT_SUCCESS);
-}
 
-int main(int argc, char* argv[]) {
-    struct ucred user;
-    int dim_cli, i = 0, len = sizeof(struct ucred);
-    struct sockaddr_un end_cli;
-
-    signal(SIGINT, kill_handler);
-
-    parseArgs(argc, argv);
-
-    outputFp = openOutputFile();
-    fs = new_tecnicofs();
-    inode_table_init();
-
-    mutex_init(&commandsLock);
-    mount(socket_name);
-
-    TIMER_READ(startTime);
-
-    while (1) {
-        dim_cli = sizeof(end_cli);
-        connections[num_connects] = (struct threadArg*) malloc(sizeof(int) + sizeof(uid_t));
-        connections[num_connects]->newSockfd = accept(sockfd, (struct sockaddr *)&end_cli, (socklen_t*)&dim_cli);
-        if (connections[num_connects]->newSockfd < 0)
-            perror("Error accepting client connection");
-
-        if(getsockopt(connections[num_connects]->newSockfd, SOL_SOCKET, SO_PEERCRED, &user, (socklen_t*)&len) < 0)
-            perror("Error obtaining client id");
-
-        connections[num_connects]->uID = user.uid;
-        connections[num_connects]->index = num_connects;
-
-        pthread_create(&tid[i++], NULL, handle_client, (void*)connections[num_connects++]);
-    }
 }
