@@ -24,11 +24,12 @@ TIMER_T startTime, stopTime;
 
 int sockfd, num_connects = 0;
 int numberThreads = 0;
-int sigInt=-1;
 char* socket_name = NULL;
 char* global_outputFile = NULL;
 int numBuckets = 1;
 
+
+int sigInt=-1;
 sigset_t set;
 struct sigaction sa;
 
@@ -204,6 +205,7 @@ void* handle_client(void* sock) {
 }
 
 void kill_handler() {
+
     sigInt=1;
 }
 
@@ -217,7 +219,6 @@ int main(int argc, char* argv[]) {
     sigemptyset(&sa.sa_mask);
     
     sigaction(SIGINT, &sa, NULL);
-    
     parseArgs(argc, argv);
 
     outputFp = openOutputFile();
@@ -235,25 +236,30 @@ int main(int argc, char* argv[]) {
     while (sigInt==-1) {
         dim_cli = sizeof(end_cli);
         connections[num_connects] = (struct threadArg*) malloc(sizeof(int) + sizeof(uid_t));
+        if(connections[num_connects]==NULL)
+            perror("Error alocating memory");
         connections[num_connects]->newSockfd = accept(sockfd, (struct sockaddr *)&end_cli, (socklen_t*)&dim_cli);
-        if (connections[num_connects]->newSockfd < 0 && sigInt==-1){
-            perror("Error accepting client connection");
-        }
-        else if(getsockopt(connections[num_connects]->newSockfd, SOL_SOCKET, SO_PEERCRED, &user, (socklen_t*)&len) < 0 && sigInt==-1){
-            perror("Error obtaining client id");
-        }
-        else{
+        if(sigInt==-1){
+            if (connections[num_connects]->newSockfd < 0)
+                perror("Error accepting client connection");
+            
+            if(getsockopt(connections[num_connects]->newSockfd, SOL_SOCKET, SO_PEERCRED, &user, (socklen_t*)&len) < 0)
+                perror("Error obtaining client id");
+            
             connections[num_connects]->uID = user.uid;
             connections[num_connects]->index = num_connects;
 
-            pthread_create(&tid[i++], NULL, handle_client, (void*)connections[num_connects++]);
+            if(pthread_create(&tid[i++], NULL, handle_client, (void*)connections[num_connects++])!=0)
+                perror("Error creating client_handler thread");
         }
     }
-        for(int i = 0; i < num_connects; ++i) {
-        pthread_join(tid[i],NULL);
+    for(int i = 0; i < num_connects; ++i) {
+        if(pthread_join(tid[i],NULL)!=0)
+            perror("Error joining client_handler threads");
         free(connections[i]);
     }
     TIMER_READ(stopTime);
+
     fprintf(stdout, "\nTecnicoFS completed in %.4f seconds.\n",
             TIMER_DIFF_SECONDS(startTime, stopTime));
 
